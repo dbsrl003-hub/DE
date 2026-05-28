@@ -9,6 +9,129 @@ import { Candidate, CategoryType, ConsultationLog } from '../types';
 import { Upload, Clipboard, Info, Check, AlertCircle, RefreshCw, FileText } from 'lucide-react';
 import { motion } from 'motion/react';
 
+export const parseBirthDateToYYMMDD = (val: any): string => {
+  if (val === undefined || val === null) return '';
+
+  // If it's a JS Date object
+  if (val instanceof Date) {
+    if (!isNaN(val.getTime())) {
+      const yy = String(val.getFullYear()).slice(-2);
+      const mm = String(val.getMonth() + 1).padStart(2, '0');
+      const dd = String(val.getDate()).padStart(2, '0');
+      return `${yy}${mm}${dd}`;
+    }
+    return '';
+  }
+
+  let s = String(val).trim();
+  if (!s) return '';
+
+  // Clean trailing timezone description (e.g., "(한국 표준시)")
+  s = s.replace(/\s*\([^)]+\)/g, '').trim();
+
+  // 1. Is it a 5-digit Excel date serial? (e.g. 34415 for 1994-03-22 or 45367 or whatever)
+  if (/^\d{5}(\.\d+)?$/.test(s)) {
+    const serial = parseFloat(s);
+    const utc_days  = Math.floor(serial - 25569);
+    const utc_value = utc_days * 86400;
+    const date_info = new Date(utc_value * 1000);
+    const year = date_info.getFullYear();
+    if (year >= 1900 && year <= 2100) {
+      const yy = String(year).slice(-2);
+      const mm = String(date_info.getMonth() + 1).padStart(2, '0');
+      const dd = String(date_info.getDate()).padStart(2, '0');
+      const res = `${yy}${mm}${dd}`;
+      if (/^\d{6}$/.test(res)) return res;
+    }
+  }
+
+  // 2. Korean date format check: e.g., "13년 3월 30일", "2013년 03월 30일"
+  const koMatch = s.match(/(?:19|20)?(\d{2})\s*년\s*(0?[1-9]|1[0-2])\s*월\s*(0?[1-9]|[12]\d|3[01])\s*일/);
+  if (koMatch) {
+    const yy = koMatch[1];
+    const mm = koMatch[2].padStart(2, '0');
+    const dd = koMatch[3].padStart(2, '0');
+    return `${yy}${mm}${dd}`;
+  }
+
+  // 3. Separator-based format check: e.g., "2013.03.30", "13-03-30", "13/3/30"
+  const sepMatch = s.match(/(?:19|20)?(\d{2})[-./\s]+(0?[1-9]|1[0-2]|\d)[-./\s]+(0?[1-9]|[12]\d|3[01]|\d)/);
+  if (sepMatch) {
+    const yy = sepMatch[1];
+    const mm = sepMatch[2].padStart(2, '0');
+    const dd = sepMatch[3].padStart(2, '0');
+    return `${yy}${mm}${dd}`;
+  }
+
+  // 4. Resident Registration Number (RRN) check with hyphen or continuous: e.g. "130330-3123456" or "1303303123456"
+  const rrnMatch = s.match(/^(\d{2})(0[1-9]|1[0-2])(0[1-9]|[12]\d|3[01])[-./\s]*\d/);
+  if (rrnMatch) {
+    return `${rrnMatch[1]}${rrnMatch[2]}${rrnMatch[3]}`;
+  }
+
+  // 5. Pure 8-digit checking: e.g. "20130330" or "19940322"
+  const pure8Match = s.match(/^(?:19|20)(\d{2})(0[1-9]|1[0-2])(0[1-9]|[12]\d|3[01])$/);
+  if (pure8Match) {
+    return `${pure8Match[1]}${pure8Match[2]}${pure8Match[3]}`;
+  }
+
+  // 6. Pure 6-digit checking: e.g. "130330"
+  const pure6Match = s.match(/^(\d{2})(0[1-9]|1[0-2])(0[1-9]|[12]\d|3[01])$/);
+  if (pure6Match) {
+    return `${pure6Match[1]}${pure6Match[2]}${pure6Match[3]}`;
+  }
+
+  // 7. General extract first 6 or 8 digits from any messy string
+  // Clean all characters except digits first
+  const digits = s.replace(/[^\d]/g, '');
+
+  const blockMatch = s.match(/\b(\d{6})\b/) || s.match(/(\d{6})/);
+  if (blockMatch) {
+    const candidateDigits = blockMatch[1];
+    const mm = parseInt(candidateDigits.substring(2, 4), 10);
+    const dd = parseInt(candidateDigits.substring(4, 6), 10);
+    if (mm >= 1 && mm <= 12 && dd >= 1 && dd <= 31) {
+      return candidateDigits;
+    }
+  }
+
+  const block8Match = s.match(/\b(\d{8})\b/) || s.match(/(\d{8})/);
+  if (block8Match) {
+    const candidateDigits = block8Match[1];
+    const mm = parseInt(candidateDigits.substring(4, 6), 10);
+    const dd = parseInt(candidateDigits.substring(6, 8), 10);
+    if (mm >= 1 && mm <= 12 && dd >= 1 && dd <= 31) {
+      return candidateDigits.substring(2);
+    }
+  }
+
+  if (digits.length === 6) {
+    return digits;
+  }
+  if (digits.length === 13) {
+    return digits.substring(0, 6);
+  }
+  if (digits.length > 6) {
+    return digits.substring(0, 6);
+  }
+
+  // 8. Browser Date parse as fallback
+  if (isNaN(Number(s)) && s.length > 5) {
+    const parsedDate = new Date(s);
+    if (!isNaN(parsedDate.getTime())) {
+      const year = parsedDate.getFullYear();
+      if (year >= 1900 && year <= 2100) {
+        const yy = String(year).slice(-2);
+        const mm = String(parsedDate.getMonth() + 1).padStart(2, '0');
+        const day = String(parsedDate.getDate()).padStart(2, '0');
+        return `${yy}${mm}${day}`;
+      }
+    }
+  }
+
+  return '';
+};
+
 interface ExcelImporterProps {
   onImport: (newCandidates: Candidate[]) => void;
 }
@@ -34,20 +157,10 @@ export default function ExcelImporter({ onImport }: ExcelImporterProps) {
       return `${year}-${month}-${day}`;
     }
 
-    const dateStr = String(val).trim();
+    let dateStr = String(val).trim();
+    if (!dateStr) return '2026-05-28';
 
-    // 2. Try parsing it as a Javascript Date if it contains standard JS date string indicators
-    if (dateStr.includes('GMT') || dateStr.includes('UTC') || /[a-zA-Z]/.test(dateStr) || dateStr.includes('표준시')) {
-      const parsedDate = new Date(dateStr);
-      if (!isNaN(parsedDate.getTime())) {
-        const year = parsedDate.getFullYear();
-        const month = String(parsedDate.getMonth() + 1).padStart(2, '0');
-        const day = String(parsedDate.getDate()).padStart(2, '0');
-        return `${year}-${month}-${day}`;
-      }
-    }
-    
-    // Excel Day serial format: e.g. 45367
+    // 1. If it is purely a number and matches 5-digit Excel serial format (between 10000 and 99999)
     if (/^\d{5}(\.\d+)?$/.test(dateStr)) {
       const serial = parseFloat(dateStr);
       const utc_days  = Math.floor(serial - 25569);
@@ -57,33 +170,82 @@ export default function ExcelImporter({ onImport }: ExcelImporterProps) {
       const year = date_info.getFullYear();
       const month = String(date_info.getMonth() + 1).padStart(2, '0');
       const day = String(date_info.getDate()).padStart(2, '0');
-      return `${year}-${month}-${day}`;
+      if (year >= 1900 && year <= 2100) {
+        return `${year}-${month}-${day}`;
+      }
     }
 
-    // Try normal parsed formats
+    // 2. Identify and parse standard sequences of pure digits (length 6 or 8) FIRST,
+    // to prevent standard JavaScript `new Date()` from treating numeric codes as huge year dates.
     const digits = dateStr.replace(/[^\d]/g, '');
-    if (digits.length === 8) {
-      return `${digits.substring(0, 4)}-${digits.substring(4, 6)}-${digits.substring(6, 8)}`;
-    }
+    
+    // If we have 6 digits (YYMMDD), map to 19YY-MM-DD or 20YY-MM-DD
     if (digits.length === 6) {
-      const prefix = parseInt(digits.substring(0, 2)) > 50 ? '19' : '20';
-      return `${prefix}${digits.substring(0, 2)}-${digits.substring(2, 4)}-${digits.substring(4, 6)}`;
+      const yy = parseInt(digits.substring(0, 2), 10);
+      const mm = parseInt(digits.substring(2, 4), 10);
+      const dd = parseInt(digits.substring(4, 6), 10);
+      if (mm >= 1 && mm <= 12 && dd >= 1 && dd <= 31) {
+        const prefix = yy > 50 ? '19' : '20';
+        return `${prefix}${String(yy).padStart(2, '0')}-${String(mm).padStart(2, '0')}-${String(dd).padStart(2, '0')}`;
+      }
+    }
+    
+    // If we have 8 digits (YYYYMMDD), map to YYYY-MM-DD
+    if (digits.length === 8) {
+      const yyyy = parseInt(digits.substring(0, 4), 10);
+      const mm = parseInt(digits.substring(4, 6), 10);
+      const dd = parseInt(digits.substring(6, 8), 10);
+      if (yyyy >= 1900 && yyyy <= 2100 && mm >= 1 && mm <= 12 && dd >= 1 && dd <= 31) {
+        return `${yyyy}-${String(mm).padStart(2, '0')}-${String(dd).padStart(2, '0')}`;
+      }
     }
 
+    // 3. What if it is formatted like "2024.1.2" or "94-3-22"
     const parts = dateStr.split(/[-./_]/).map(p => p.trim());
     if (parts.length === 3) {
-      let year = parts[0];
-      if (year.length === 2) {
-        year = parseInt(year) > 50 ? `19${year}` : `20${year}`;
+      const yDigits = parts[0].replace(/[^\d]/g, '');
+      const mDigits = parts[1].replace(/[^\d]/g, '');
+      const dDigits = parts[2].replace(/[^\d]/g, '');
+      
+      if (yDigits && mDigits && dDigits) {
+        let yearNum = parseInt(yDigits, 10);
+        let monthNum = parseInt(mDigits, 10);
+        let dayNum = parseInt(dDigits, 10);
+        
+        if (monthNum >= 1 && monthNum <= 12 && dayNum >= 1 && dayNum <= 31) {
+          if (yDigits.length === 2) {
+            yearNum = yearNum > 50 ? 1900 + yearNum : 2000 + yearNum;
+          }
+          if (yearNum >= 1900 && yearNum <= 2100) {
+            return `${yearNum}-${String(monthNum).padStart(2, '0')}-${String(dayNum).padStart(2, '0')}`;
+          }
+        }
       }
-      const month = parts[1].padStart(2, '0');
-      const day = parts[2].padStart(2, '0');
-      return `${year}-${month}-${day}`;
     }
 
-    const matches = dateStr.match(/(\d{4})[-./](\d{1,2})[-./](\d{1,2})/);
-    if (matches) {
-      return `${matches[1]}-${matches[2].padStart(2, '0')}-${matches[3].padStart(2, '0')}`;
+    // 4. Strip out trailing parentheses e.g. "(한국 표준시)" and try standard JavaScript Dates with year strict bounds
+    const sanitizedZoneStr = dateStr.replace(/\s*\([^)]+\)/g, '').trim();
+    if (sanitizedZoneStr.includes('GMT') || sanitizedZoneStr.includes('UTC') || /[a-zA-Z]/.test(sanitizedZoneStr) || sanitizedZoneStr.includes('표준시')) {
+      const parsedDate = new Date(sanitizedZoneStr);
+      if (!isNaN(parsedDate.getTime())) {
+        const year = parsedDate.getFullYear();
+        const month = String(parsedDate.getMonth() + 1).padStart(2, '0');
+        const day = String(parsedDate.getDate()).padStart(2, '0');
+        if (year >= 1900 && year <= 2100) {
+          return `${year}-${month}-${day}`;
+        }
+      }
+    }
+
+    // Direct browser Parse fallback only if year is within normal boundaries (1900 ~ 2100)
+    const directParsed = new Date(dateStr);
+    if (!isNaN(directParsed.getTime())) {
+      const year = directParsed.getFullYear();
+      if (year >= 1900 && year <= 2100) {
+        const month = String(directParsed.getMonth() + 1).padStart(2, '0');
+        const day = String(directParsed.getDate()).padStart(2, '0');
+        return `${year}-${month}-${day}`;
+      }
     }
 
     return dateStr;
@@ -274,8 +436,23 @@ export default function ExcelImporter({ onImport }: ExcelImporterProps) {
           genderVal = '여';
         }
 
+        const candName = getCell('name', '이름없음');
+        if (candName === '성명' || candName === '이름') {
+          continue;
+        }
+
         const rawBirth = getCell('birthDate');
-        const birthVal = formatExcelDate(rawBirth);
+        const birthVal = parseBirthDateToYYMMDD(rawBirth);
+
+        let typeVal = getCell('disabilityType');
+        if (typeVal === '미분류' || typeVal === '미지정' || typeVal === '미상') {
+          typeVal = '';
+        }
+
+        let gradeVal = getCell('disabilityGrade');
+        if (gradeVal === '미분류' || gradeVal === '미지정' || gradeVal === '미상') {
+          gradeVal = '';
+        }
 
         const logsCell = getCell('consultationLogs');
         const logs = parseRemarksAndLogs(logsCell, formattedRegDate, i);
@@ -285,11 +462,11 @@ export default function ExcelImporter({ onImport }: ExcelImporterProps) {
           category: cat,
           registrationDate: formattedRegDate || '2026-05-28',
           registrar: getCell('registrar', '미기재'),
-          name: getCell('name', '이름없음'),
-          birthDate: birthVal || '1990-01-01',
+          name: candName,
+          birthDate: birthVal || '',
           gender: genderVal,
-          disabilityType: getCell('disabilityType', '미지정'),
-          disabilityGrade: getCell('disabilityGrade', '미분류'),
+          disabilityType: typeVal,
+          disabilityGrade: gradeVal,
           complexDisability: getBool('complexDisability'),
           fundingNational: getCell('fundingNational'),
           fundingProvincial: getCell('fundingProvincial'),
@@ -527,7 +704,10 @@ export default function ExcelImporter({ onImport }: ExcelImporterProps) {
                       </td>
                       <td className="py-2 px-1 font-bold">{cand.name}</td>
                       <td className="py-2 px-1 text-slate-500 font-mono">{cand.registrationDate}</td>
-                      <td className="py-2 px-1">{cand.disabilityType} ({cand.disabilityGrade})</td>
+                      <td className="py-2 px-1">
+                        {cand.disabilityType || '미지정'}
+                        {cand.disabilityGrade ? ` (${cand.disabilityGrade})` : ''}
+                      </td>
                       <td className="py-2 px-1 max-w-[150px] truncate">
                         {(() => {
                           const parts = [];

@@ -9,7 +9,7 @@ import { Candidate, CategoryType } from './types';
 import { INITIAL_CANDIDATES } from './data/sampleData';
 import CandidateTable from './components/CandidateTable';
 import CandidateDetailModal from './components/CandidateDetailModal';
-import ExcelImporter from './components/ExcelImporter';
+import ExcelImporter, { parseBirthDateToYYMMDD } from './components/ExcelImporter';
 import { 
   FileSpreadsheet, 
   Printer, 
@@ -35,6 +35,7 @@ export default function App() {
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [editingCandidate, setEditingCandidate] = useState<Candidate | null>(null);
   const [showImporter, setShowImporter] = useState(false);
+  const [showPrintGuide, setShowPrintGuide] = useState(false);
   const [confirmDialog, setConfirmDialog] = useState<{ 
     isOpen: boolean; 
     title: string; 
@@ -49,7 +50,30 @@ export default function App() {
     const saved = localStorage.getItem('waitlist_candidates');
     if (saved) {
       try {
-        setCandidates(JSON.parse(saved));
+        const parsed = JSON.parse(saved) as Candidate[];
+        // Auto-heal any invalid dates (like "131030-01-01" or grade "미분류") upon startup
+        const normalized = parsed.map(c => {
+          let cleanedBirth = c.birthDate || '';
+          if (cleanedBirth) {
+            cleanedBirth = parseBirthDateToYYMMDD(cleanedBirth);
+          }
+          let cleanedGrade = c.disabilityGrade || '';
+          if (cleanedGrade === '미분류' || cleanedGrade === '미지정' || cleanedGrade === '미상') {
+            cleanedGrade = '';
+          }
+          let cleanedType = c.disabilityType || '';
+          if (cleanedType === '미분류' || cleanedType === '미지정' || cleanedType === '미상') {
+            cleanedType = '';
+          }
+          return {
+            ...c,
+            birthDate: cleanedBirth,
+            disabilityGrade: cleanedGrade,
+            disabilityType: cleanedType
+          };
+        });
+        setCandidates(normalized);
+        localStorage.setItem('waitlist_candidates', JSON.stringify(normalized));
       } catch (e) {
         setCandidates(INITIAL_CANDIDATES);
       }
@@ -66,20 +90,20 @@ export default function App() {
   };
 
   // YEAR SEGREGATION LOGIC:
-  // "접수일을 기준으로 나누되 상담내역에 그 다음 연도에 대한 상담내역이 있을 시 그 연도에 포함해서 보여주는거지."
+  // "2024년을 클릭하면 24년 자료만 25년을 클릭하면 25년 자료만 보여줘. 24년 이전 자료는 걸러내도 돼."
   const getCandidatesByYear = (year: string) => {
-    if (year === '전체') return candidates;
-    return candidates.filter(cand => {
-      // 1. Check if Registration date matches target year
-      const regYear = cand.registrationDate.split('-')[0];
-      if (regYear === year) return true;
+    // 2024년 이전 자료는 전체적으로 걸러냅니다
+    const safeCandidates = candidates.filter(cand => {
+      if (!cand.registrationDate) return false;
+      const regYear = parseInt(cand.registrationDate.split('-')[0], 10);
+      return !isNaN(regYear) && regYear >= 2024;
+    });
 
-      // 2. Check if ANY consultation log date falls in the target year
-      const hasLogYear = cand.consultationLogs && cand.consultationLogs.some(log => {
-        return log.date.split('-')[0] === year;
-      });
-      
-      return hasLogYear;
+    if (year === '전체') return safeCandidates;
+    
+    return safeCandidates.filter(cand => {
+      const regYear = cand.registrationDate.split('-')[0];
+      return regYear === year;
     });
   };
 
@@ -289,8 +313,12 @@ export default function App() {
     XLSX.writeFile(wb, `이용대기명단정리_${displayYear}_${formatToday}.xlsx`);
   };
 
-  // Clean direct native print invocation
+  // Open the printable interface helper modal for the user
   const handlePrint = () => {
+    setShowPrintGuide(true);
+  };
+
+  const executeSystemPrint = () => {
     try {
       window.focus();
       window.print();
@@ -519,6 +547,7 @@ export default function App() {
             onUpdateCategory={handleUpdateCategory}
             onDelete={handleDeleteCandidate}
             selectedYear={selectedYear}
+            onPrintTrigger={handlePrint}
           />
         </section>
 
@@ -585,6 +614,64 @@ export default function App() {
                     className="flex-1 py-2 rounded-xl bg-rose-600 hover:bg-rose-700 text-white text-xs font-bold transition-all shadow-md shadow-rose-600/10 cursor-pointer"
                   >
                     {confirmDialog.actionText || '삭제 실행'}
+                  </button>
+                </div>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      {/* EXQUISITE PRINT ADVISORY DIALOG */}
+      <AnimatePresence>
+        {showPrintGuide && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-xs print:hidden">
+            <motion.div 
+              initial={{ scale: 0.95, opacity: 0 }}
+              animate={{ scale: 1, opacity: 1 }}
+              exit={{ scale: 0.95, opacity: 0 }}
+              className="bg-white rounded-2xl max-w-sm w-full shadow-2xl border border-slate-100 overflow-hidden z-50 animate-in fade-in zoom-in-95 duration-200"
+            >
+              <div className="p-6 space-y-4">
+                <div className="w-12 h-12 rounded-full bg-emerald-50 text-emerald-600 flex items-center justify-center mx-auto border border-emerald-100">
+                  <Printer className="w-6 h-6 shrink-0" />
+                </div>
+                
+                <h3 className="text-sm font-black text-slate-800 text-center">🖨️ 대기목록 인쇄 지원 안내</h3>
+                
+                <div className="space-y-2.5 text-xs text-slate-600 leading-relaxed font-semibold bg-slate-50 p-4 rounded-xl border border-slate-100">
+                  <p>
+                    현재 이용대기명단 화면은 <span className="text-emerald-700 font-bold">AI 스튜디오의 미리보기(아이프레임)</span> 내부입니다.
+                  </p>
+                  <p>
+                    최신 브라우저 보안 정책상, 아이프레임 내부에서는 인쇄 설정창(<code className="bg-slate-200/80 px-1 py-0.5 rounded font-mono text-[10px]">window.print()</code>) 호출이 무시되거나 먹통이 될 수 있습니다.
+                  </p>
+                  <div className="border-t border-slate-250/60 pt-2.5 text-emerald-800 text-[11px]">
+                    <p className="font-extrabold mb-1">💡 완벽한 해결 방법:</p>
+                    <p className="leading-relaxed">
+                      우측 상단에 위치한 <strong className="text-emerald-900 font-black">🍿 [새 창에서 열기]</strong> 버튼(아이프레임 상단 화살표 아이콘)을 눌러 단독 탭으로 웹앱을 실행해 주세요! 그 후 인쇄 버튼을 정식으로 클릭하시면 완벽하게 정상 출력이 가능합니다.
+                    </p>
+                  </div>
+                </div>
+
+                <div className="flex gap-2 pt-1">
+                  <button
+                    type="button"
+                    onClick={() => setShowPrintGuide(false)}
+                    className="flex-1 py-2 rounded-xl border border-slate-200 text-slate-600 hover:bg-slate-50 text-xs font-bold transition-all cursor-pointer"
+                  >
+                    확인 및 닫기
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      executeSystemPrint();
+                      setShowPrintGuide(false);
+                    }}
+                    className="flex-1 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold transition-all shadow-md shadow-emerald-600/10 cursor-pointer flex items-center justify-center gap-1.5"
+                  >
+                    <Printer className="w-3.5 h-3.5" />
+                    인쇄창 호출
                   </button>
                 </div>
               </div>

@@ -14,6 +14,7 @@ interface CandidateTableProps {
   onUpdateCategory: (id: string, category: CategoryType) => void;
   onDelete: (id: string) => void;
   selectedYear: string;
+  onPrintTrigger?: () => void;
 }
 
 // Helper to evaluate matching status based on keywords from the last consultation log
@@ -49,12 +50,70 @@ export default function CandidateTable({
   onSelect,
   onUpdateCategory,
   onDelete,
-  selectedYear
+  selectedYear,
+  onPrintTrigger
 }: CandidateTableProps) {
   const [searchTerm, setSearchTerm] = useState('');
   const [categoryFilter, setCategoryFilter] = useState<'전체' | CategoryType>('전체');
   const [sortBy, setSortBy] = useState<'date' | 'name' | 'category'>('date');
-  const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('desc');
+  const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('asc');
+
+  // Drag-to-scroll anywhere horizontal scroll handlers
+  const scrollRef = React.useRef<HTMLDivElement>(null);
+  const [isDragging, setIsDragging] = useState(false);
+  const [startX, setStartX] = useState(0);
+  const [scrollLeft, setScrollLeft] = useState(0);
+
+  const handleMouseDown = (e: React.MouseEvent) => {
+    const target = e.target as HTMLElement;
+    if (
+      target.tagName === 'SELECT' || 
+      target.tagName === 'INPUT' || 
+      target.tagName === 'BUTTON' || 
+      target.closest('button') ||
+      target.closest('select') ||
+      target.closest('input')
+    ) {
+      return;
+    }
+    const container = scrollRef.current;
+    if (!container) return;
+    setIsDragging(true);
+    setStartX(e.pageX - container.offsetLeft);
+    setScrollLeft(container.scrollLeft);
+  };
+
+  const handleMouseLeave = () => {
+    setIsDragging(false);
+  };
+
+  const handleMouseUp = () => {
+    setIsDragging(false);
+  };
+
+  const handleMouseMove = (e: React.MouseEvent) => {
+    if (!isDragging) return;
+    e.preventDefault();
+    const container = scrollRef.current;
+    if (!container) return;
+    const x = e.pageX - container.offsetLeft;
+    const walk = (x - startX) * 1.5;
+    container.scrollLeft = scrollLeft - walk;
+  };
+
+  // Split phone numbers on whitespace or standard delimiters when multiple exist
+  const formatPhoneNumbers = (phoneStr: string) => {
+    if (!phoneStr) return [];
+    // Pattern to match Korean phone sequence possibly with parenthesized annotations: 
+    // e.g., "010-1234-5678 (남동생)" or "010-5321-9999(사회복지사)"
+    const phonePattern = /01[0-9]-\d{3,4}-\d{4}(?:\s*\([^)]+\))?/gi;
+    const matches = phoneStr.match(phonePattern);
+    if (matches && matches.length > 0) {
+      return matches.map(m => m.trim());
+    }
+    // fallback for items without standard phone format
+    return phoneStr.split(/[\n,;]/).map(p => p.trim()).filter(Boolean);
+  };
 
   // Multi-column search implementation
   const filteredCandidates = candidates.filter(cand => {
@@ -90,15 +149,15 @@ export default function CandidateTable({
     const serviceNotesCombined = `${cand.serviceContent} ${cand.specialNotes}`.toLowerCase();
     
     return (
-      cand.name.toLowerCase().includes(term) ||
-      cand.registrar.toLowerCase().includes(term) ||
-      cand.phone.includes(term) ||
-      cand.disabilityType.toLowerCase().includes(term) ||
-      cand.disabilityGrade.toLowerCase().includes(term) ||
+      (cand.name || '').toLowerCase().includes(term) ||
+      (cand.registrar || '').toLowerCase().includes(term) ||
+      (cand.phone || '').includes(term) ||
+      (cand.disabilityType || '').toLowerCase().includes(term) ||
+      (cand.disabilityGrade || '').toLowerCase().includes(term) ||
       combinedAddress.includes(term) ||
       serviceNotesCombined.includes(term) ||
       fundingMatch ||
-      cand.remarks.toLowerCase().includes(term)
+      (cand.remarks || '').toLowerCase().includes(term)
     );
   });
 
@@ -126,11 +185,15 @@ export default function CandidateTable({
   });
 
   const handleDirectPrint = () => {
-    try {
-      window.focus();
-      window.print();
-    } catch (e) {
-      console.warn('Print print failed', e);
+    if (onPrintTrigger) {
+      onPrintTrigger();
+    } else {
+      try {
+        window.focus();
+        window.print();
+      } catch (e) {
+        console.warn('Print print failed', e);
+      }
     }
   };
 
@@ -139,7 +202,7 @@ export default function CandidateTable({
       setSortOrder(prev => prev === 'asc' ? 'desc' : 'asc');
     } else {
       setSortBy(type);
-      setSortOrder('desc');
+      setSortOrder('asc');
     }
   };
 
@@ -213,267 +276,309 @@ export default function CandidateTable({
       </div>
 
       {/* Main Table Area */}
-      <div className="overflow-x-auto print:overflow-visible">
-        <table className="w-full border-collapse text-left text-[11px] min-w-[1650px] print:min-w-full">
+      <div 
+        ref={scrollRef}
+        onMouseDown={handleMouseDown}
+        onMouseLeave={handleMouseLeave}
+        onMouseUp={handleMouseUp}
+        onMouseMove={handleMouseMove}
+        className={`overflow-auto select-none print:overflow-visible transition-all duration-150 border border-slate-100 rounded-xl shadow-inner scrollbar-thin scrollbar-thumb-slate-200 ${
+          isDragging ? 'cursor-grabbing' : 'cursor-grab'
+        } max-h-[72vh]`}
+        title="마우스로 클릭 후 드래그하여 가로 방향으로 편리하게 스크롤 하실 수 있습니다."
+      >
+        <table className="w-full border-collapse text-left text-[11px] min-w-[1125px] table-fixed print:min-w-full print:table-auto">
           <thead>
             {/* Headers */}
-            <tr className="bg-slate-50/85 text-slate-600 border-b border-rose-100 font-bold print:bg-white text-[11px] whitespace-nowrap">
-              <th className="py-2.5 px-1 text-center w-10 font-mono align-middle">순번</th>
-              <th className="py-2.5 px-1.5 text-center w-16 cursor-pointer hover:bg-slate-100 transition-colors print:hover:bg-white align-middle" onClick={() => toggleSort('category')}>
-                <div className="flex items-center justify-center gap-1">
-                  구분
-                  <ArrowUpDown className="w-3 h-3 text-slate-400 print:hidden" />
+            <tr className="bg-slate-100/90 text-slate-705 border-b border-rose-100 font-bold print:bg-white text-[11px] whitespace-nowrap sticky top-0 z-10 shadow-sm">
+              <th className="py-3 px-3 text-left w-[440px] align-middle">
+                <div className="flex items-center justify-between gap-1.5">
+                  <span className="text-slate-700 font-black">순번, 인적사항 / 재원·주소·연락처</span>
+                  <div className="flex items-center gap-1.5 print:hidden mr-2">
+                    <span className="text-[10px] text-slate-400 font-bold">정렬:</span>
+                    <button
+                      onClick={() => toggleSort('date')}
+                      className={`px-1.5 py-0.5 rounded text-[10px] font-bold border transition-all flex items-center gap-0.5 cursor-pointer ${
+                        sortBy === 'date'
+                          ? 'bg-emerald-600 text-white border-emerald-600 shadow-sm font-black'
+                          : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-50'
+                      }`}
+                    >
+                      접수일{sortBy === 'date' && (sortOrder === 'asc' ? '▲' : '▼')}
+                    </button>
+                    <button
+                      onClick={() => toggleSort('name')}
+                      className={`px-1.5 py-0.5 rounded text-[10px] font-bold border transition-all flex items-center gap-0.5 cursor-pointer ${
+                        sortBy === 'name'
+                          ? 'bg-emerald-600 text-white border-emerald-600 shadow-sm font-black'
+                          : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-50'
+                      }`}
+                    >
+                      성명{sortBy === 'name' && (sortOrder === 'asc' ? '▲' : '▼')}
+                    </button>
+                    <button
+                      onClick={() => toggleSort('category')}
+                      className={`px-1.5 py-0.5 rounded text-[10px] font-bold border transition-all flex items-center gap-0.5 cursor-pointer ${
+                        sortBy === 'category'
+                          ? 'bg-emerald-600 text-white border-emerald-600 shadow-sm font-black'
+                          : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-50'
+                      }`}
+                    >
+                      구분{sortBy === 'category' && (sortOrder === 'asc' ? '▲' : '▼')}
+                    </button>
+                  </div>
                 </div>
               </th>
-              <th className="py-2.5 px-1.5 text-center w-24 cursor-pointer hover:bg-slate-100 transition-colors print:hover:bg-white align-middle animate-pulse-subtle" onClick={() => toggleSort('date')}>
-                <div className="flex items-center justify-center gap-1">
-                  접수일
-                  <ArrowUpDown className="w-3 h-3 text-slate-400 print:hidden" />
-                </div>
-              </th>
-              <th className="py-2.5 px-1.5 text-center w-16 align-middle">접수자</th>
-              <th className="py-2.5 px-1.5 text-center w-20 cursor-pointer hover:bg-slate-100 transition-colors print:hover:bg-white align-middle" onClick={() => toggleSort('name')}>
-                <div className="flex items-center justify-center gap-1">
-                  성명
-                  <ArrowUpDown className="w-3 h-3 text-slate-400 print:hidden" />
-                </div>
-              </th>
-              <th className="py-2.5 px-1.5 text-center w-20 align-middle font-mono">생년월일</th>
-              <th className="py-2.5 px-1 align-middle text-center w-10">성별</th>
-              <th className="py-2.5 px-1.5 w-32 align-middle">장애유형 / 급수</th>
-              <th className="py-2.5 px-1 text-center w-12 align-middle text-emerald-800">국비</th>
-              <th className="py-2.5 px-1 text-center w-12 align-middle text-sky-800">도비</th>
-              <th className="py-2.5 px-1 text-center w-12 align-middle text-purple-800">시비</th>
-              <th className="py-2.5 px-2 w-64 min-w-[260px] align-middle text-slate-700">주소</th>
-              <th className="py-2.5 px-1.5 w-28 align-middle">연락처</th>
-              <th className="py-2.5 px-2 w-64 align-middle">서비스 내용 (*특이사항)</th>
-              <th className="py-2.5 px-2 w-64 align-middle">추가상담</th>
-              <th className="py-2.5 px-1.5 text-center w-16 align-middle">매칭여부</th>
-              <th className="py-2.5 px-1.5 text-center w-24 print:hidden align-middle">관리액션</th>
+              <th className="py-3 px-3 w-[240px] align-middle text-left font-black text-slate-700">서비스 내용 (*특이사항)</th>
+              <th className="py-3 px-3 w-[280px] align-middle text-left font-black text-slate-700">추가상담 (전체 이력)</th>
+              <th className="py-3 px-2 text-center w-[65px] align-middle font-black text-slate-700">매칭여부</th>
+              <th className="py-3 px-2 text-center w-[100px] print:hidden align-middle font-black text-slate-700">관리액션</th>
             </tr>
           </thead>
           
-          <tbody className="divide-y divide-slate-100">
+          <tbody className="divide-y divide-slate-300">
             {sortedCandidates.length > 0 ? (
               sortedCandidates.map((cand, idx) => {
-                // Combine address dynamically
-                const fullAddress = `${cand.addressCity} ${cand.addressDistrict} ${cand.addressDong} ${cand.addressDetail}`.replace(/\s+/g, ' ').trim();
                 const matchedVal = getLastLogMatching(cand);
 
                 return (
                   <tr 
                     key={cand.id} 
-                    className="hover:bg-slate-50/70 transition-colors group print:hover:bg-white hover:shadow-inner"
+                    className="hover:bg-slate-50/50 transition-colors group print:hover:bg-white border-b border-slate-300/90"
                   >
                     
-                    {/* Render sequence count (1-based index) */}
-                    <td className="py-2.5 px-1 text-center font-bold text-slate-400 font-mono align-middle">
-                      {idx + 1}
-                    </td>
-
-                    {/* Category Column (Interactive Dropdown Select) */}
-                    <td className="py-2 px-1.5 text-center align-middle print:py-2">
-                      <div className="print:hidden">
-                        <select
-                          value={cand.category}
-                          onChange={(e) => onUpdateCategory(cand.id, e.target.value as CategoryType)}
-                          className={`inline-block px-2 py-0.5 text-[11px] font-extrabold rounded-lg cursor-pointer transition-all border outline-none font-sans text-center ${
-                            cand.category === '대기' ? 'bg-orange-50 text-orange-600 border-orange-200 focus:ring-1 focus:ring-orange-400' :
-                            cand.category === '삭제' ? 'bg-rose-50 text-rose-600 border-rose-200 focus:ring-1 focus:ring-rose-400' :
-                            cand.category === '보류' ? 'bg-amber-50 text-amber-600 border-amber-200 focus:ring-1 focus:ring-amber-400' :
-                            'bg-emerald-50 text-emerald-600 border-emerald-200 focus:ring-1 focus:ring-emerald-400'
-                          }`}
-                        >
-                          <option value="대기">대기</option>
-                          <option value="보류">보류</option>
-                          <option value="연계">연계</option>
-                          <option value="삭제">삭제</option>
-                        </select>
-                      </div>
-                      <div className="hidden print:block font-extrabold text-[11px] text-center">
-                        {cand.category}
-                      </div>
-                    </td>
-
-                    {/* Registration Date */}
-                    <td className="py-2.5 px-1.5 text-center text-slate-500 font-medium whitespace-nowrap align-middle">
-                      {cand.registrationDate}
-                    </td>
-
-                    {/* Registrar */}
-                    <td className="py-2.5 px-1.5 text-center font-medium text-slate-700 whitespace-nowrap align-middle">
-                      {cand.registrar || '미지정'}
-                    </td>
-
-                    {/* Client Name */}
-                    <td className="py-2.5 px-1.5 text-center font-bold text-slate-900 whitespace-nowrap align-middle">
-                      {cand.name}
-                    </td>
-
-                    {/* Birthdate */}
-                    <td className="py-2.5 px-1.5 text-center text-slate-500 font-mono whitespace-nowrap align-middle">
-                      {cand.birthDate || '미상'}
-                    </td>
-
-                    {/* Gender */}
-                    <td className="py-2.5 px-1 text-center align-middle">
-                      <span className={`px-2 py-0.5 rounded text-[11px] font-bold ${
-                        cand.gender === '남' ? 'bg-sky-50 text-sky-600' :
-                        cand.gender === '여' ? 'bg-pink-50 text-pink-600' :
-                        'bg-slate-100 text-slate-600'
-                      }`}>
-                        {cand.gender}
-                      </span>
-                    </td>
-
-                    {/* Disability type & Grade */}
-                    <td className="py-2.5 px-1.5 align-middle">
-                      <div className="flex flex-col">
-                        <span className="font-bold text-slate-800 whitespace-nowrap">{cand.disabilityType || '미지정'}</span>
-                        {cand.disabilityGrade && (
-                          <span className="text-[10px] text-slate-400 font-medium whitespace-nowrap">{cand.disabilityGrade}</span>
-                        )}
-                      </div>
-                    </td>
-
-                    {/* Funding indicators / Numerical values */}
-                    <td className="py-2.5 px-1 text-center align-middle font-semibold text-slate-600">
-                      {cand.fundingNational ? (
-                        <span className="inline-block text-emerald-700 font-extrabold text-[11px] bg-emerald-50 px-2 py-0.5 rounded border border-emerald-100 whitespace-nowrap">
-                          {cand.fundingNational}
+                    {/* Aligned Left Block (Sequence, dropdown, registrar, basic card, sub-card layout) */}
+                    <td className="py-3 px-3 align-top w-[440px]">
+                      
+                      {/* Top Bar basic details */}
+                      <div className="flex flex-wrap items-center gap-x-1.5 gap-y-1 py-1 px-1 bg-white/40 rounded-t-lg text-[11px] w-full">
+                        {/* Sequence */}
+                        <span className="text-slate-400 font-mono font-bold text-[10px] bg-slate-100 border border-slate-200 px-1.5 py-0.5 rounded px-1.5 py-0.5 rounded-md min-w-[20px] text-center shrink-0">
+                          {idx + 1}
                         </span>
-                      ) : (
-                        <span className="text-slate-300">-</span>
-                      )}
-                    </td>
-                    <td className="py-2.5 px-1 text-center align-middle font-semibold text-slate-600">
-                      {cand.fundingProvincial ? (
-                        <span className="inline-block text-sky-700 font-extrabold text-[11px] bg-sky-50 px-2 py-0.5 rounded border border-sky-100 whitespace-nowrap">
-                          {cand.fundingProvincial}
-                        </span>
-                      ) : (
-                        <span className="text-slate-300">-</span>
-                      )}
-                    </td>
-                    <td className="py-2.5 px-1 text-center align-middle font-semibold text-slate-600">
-                      {cand.fundingCity ? (
-                        <span className="inline-block text-purple-700 font-extrabold text-[11px] bg-purple-50 px-2 py-0.5 rounded border border-purple-100 whitespace-nowrap">
-                          {cand.fundingCity}
-                        </span>
-                      ) : (
-                        <span className="text-slate-300">-</span>
-                      )}
-                    </td>
 
-                    {/* Address Column */}
-                    <td className="py-2.5 px-2 text-slate-700 leading-normal w-64 min-w-[260px] align-middle">
-                      <div className="flex gap-1 items-start">
-                        <MapPin className="w-3 h-3 text-slate-400 shrink-0 mt-0.5 print:hidden" />
-                        <span className="keep-all break-keep whitespace-normal leading-relaxed text-xs">
-                          {(() => {
-                            const parts = [];
-                            if (cand.addressCity) parts.push(cand.addressCity.trim());
-                            if (cand.addressDistrict) parts.push(cand.addressDistrict.trim());
-                            if (cand.addressDong && cand.addressDong.trim()) {
-                              parts.push(cand.addressDong.trim());
-                            }
-                            if (cand.addressDetail) parts.push(cand.addressDetail.trim());
-                            return parts.join(' ').replace(/\s+/g, ' ').trim() || '시/도 상세 주소 없음';
-                          })()}
-                        </span>
-                      </div>
-                    </td>
-
-                    {/* Phone Column */}
-                    <td className="py-2.5 px-1.5 text-slate-700 font-semibold font-mono whitespace-nowrap align-middle">
-                      {cand.phone ? (
-                        <div className="flex gap-1 items-center">
-                          <Phone className="w-3 h-3 text-slate-400 shrink-0 print:hidden" />
-                          <span>{cand.phone}</span>
+                        {/* Category Dropdown Selection */}
+                        <div className="shrink-0 print:hidden">
+                          <select
+                            value={cand.category}
+                            onChange={(e) => onUpdateCategory(cand.id, e.target.value as CategoryType)}
+                            className={`inline-block px-1.5 py-0.5 text-[10px] font-black rounded cursor-pointer transition-all border outline-none font-sans text-center ${
+                              cand.category === '대기' ? 'bg-orange-50 text-orange-600 border-orange-200 focus:ring-1 focus:ring-orange-400' :
+                              cand.category === '삭제' ? 'bg-rose-50 text-rose-600 border-rose-200 focus:ring-1 focus:ring-rose-400' :
+                              cand.category === '보류' ? 'bg-amber-50 text-amber-600 border-amber-200 focus:ring-1 focus:ring-amber-400' :
+                              'bg-emerald-50 text-emerald-600 border-emerald-200 focus:ring-1 focus:ring-emerald-400'
+                            }`}
+                          >
+                            <option value="대기">대기</option>
+                            <option value="보류">보류</option>
+                            <option value="연계">연계</option>
+                            <option value="삭제">삭제</option>
+                          </select>
                         </div>
-                      ) : (
-                        <span className="text-slate-300">-</span>
-                      )}
+                        <div className="hidden print:block font-extrabold text-[11px] bg-slate-50 border border-slate-150 px-1.5 py-0.5 rounded text-center shrink-0">
+                          {cand.category}
+                        </div>
+
+                        {/* Client Name */}
+                        <span className="text-slate-900 font-extrabold text-[12.5px] whitespace-nowrap px-2 py-0.5 shrink-0 bg-emerald-50/70 rounded-md border border-emerald-200/50">
+                          {cand.name}
+                        </span>
+
+                        {/* Birthdate */}
+                        {cand.birthDate ? (
+                          <span className="text-slate-600 font-mono text-[10.5px] whitespace-nowrap bg-slate-100/60 px-2 py-0.5 rounded border border-slate-200/40 shrink-0 font-medium">
+                            {cand.birthDate}
+                          </span>
+                        ) : (
+                          <span className="text-slate-400/30 font-mono text-[10.5px] px-2 py-0.5 shrink-0 select-none">
+                            &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;
+                          </span>
+                        )}
+
+                        {/* Gender */}
+                        <span className={`px-2 py-0.5 rounded text-[10.5px] font-bold shrink-0 ${
+                          cand.gender === '남' ? 'bg-sky-50 text-sky-600 border border-sky-100' :
+                          cand.gender === '여' ? 'bg-pink-50 text-pink-600 border border-pink-100' :
+                          'bg-slate-100 text-slate-600 border border-slate-200'
+                        }`}>
+                          {cand.gender}
+                        </span>
+
+                        {/* Disability type & Grade */}
+                        <div className="flex items-center gap-1 bg-violet-50/70 border border-violet-100 px-2 py-0.5 rounded-md shrink-0">
+                          <span className="font-extrabold text-violet-950 text-[10.5px]">{cand.disabilityType || '미지정'}</span>
+                          {cand.disabilityGrade && cand.disabilityGrade !== '미분류' && cand.disabilityGrade !== '미지정' && (
+                            <span className="text-[9.5px] text-violet-700 font-bold bg-white border border-violet-200/50 px-1 py-0.2 rounded">
+                              {cand.disabilityGrade}
+                            </span>
+                          )}
+                        </div>
+
+                        {/* Registrar with receipt date at the end */}
+                        <span className="text-slate-500 font-semibold text-[10px] whitespace-nowrap bg-slate-100 border border-slate-200/50 px-2 py-0.5 rounded-md shrink-0 sm:ml-auto">
+                          접수: {cand.registrar || '미지정'} ({cand.registrationDate})
+                        </span>
+                      </div>
+
+                      {/* Compact Sub-Grid matching the 2nd mockup screenshot exactly (국비, 도비, 시비, 주소, 연락처) */}
+                      <div className="mt-2 bg-slate-50 border border-slate-200/60 rounded-xl p-2.5 shadow-sm">
+                        {/* Small Table Header Row */}
+                        <div className="flex items-center text-[10px] text-slate-400 font-bold border-b border-slate-200 pb-1 mb-1 bg-slate-100/40 -mx-2.5 px-2.5 rounded-t-xl">
+                          <div className="w-[100px] flex gap-1 justify-center shrink-0">
+                            <span className="text-emerald-800">국비</span>
+                            <span className="text-sky-800">도비</span>
+                            <span className="text-purple-800">시비</span>
+                          </div>
+                          <div className="flex-1 pl-3 text-slate-500 text-left">주소</div>
+                          <div className="w-[110px] pl-2 text-slate-500 text-left shrink-0">연락처</div>
+                        </div>
+                        
+                        {/* Small Table Data Row */}
+                        <div className="flex items-start">
+                          {/* Funding Values Side by Side */}
+                          <div className="w-[100px] flex gap-1.5 justify-center items-center pt-1 shrink-0">
+                            {cand.fundingNational ? (
+                              <span className="text-[9px] font-black bg-emerald-50 text-emerald-700 px-1 py-0.5 rounded border border-emerald-150 leading-none">
+                                {cand.fundingNational}
+                              </span>
+                            ) : (
+                              <span className="text-slate-300 font-mono text-[9px]">-</span>
+                            )}
+                            {cand.fundingProvincial ? (
+                              <span className="text-[9px] font-black bg-sky-50 text-sky-700 px-1 py-0.5 rounded border border-sky-150 leading-none">
+                                {cand.fundingProvincial}
+                              </span>
+                            ) : (
+                              <span className="text-slate-300 font-mono text-[9px]">-</span>
+                            )}
+                            {cand.fundingCity ? (
+                              <span className="text-[9px] font-black bg-purple-50 text-purple-700 px-1 py-0.5 rounded border border-purple-150 leading-none">
+                                {cand.fundingCity}
+                              </span>
+                            ) : (
+                              <span className="text-slate-300 font-mono text-[9px]">-</span>
+                            )}
+                          </div>
+
+                          {/* Address Block */}
+                          <div className="flex-1 pl-3 text-left">
+                            <div className="flex gap-1 items-start text-[11px] text-slate-705 leading-normal">
+                              <MapPin className="w-3 h-3 text-slate-400 shrink-0 mt-0.5 print:hidden" />
+                              <span className="keep-all break-keep whitespace-normal leading-relaxed text-[11px] font-medium text-slate-800">
+                                {(() => {
+                                  const parts = [];
+                                  if (cand.addressCity) parts.push(cand.addressCity.replace(/[\r\n]+/g, ' ').replace(/\s+/g, ' ').trim());
+                                  if (cand.addressDistrict) parts.push(cand.addressDistrict.replace(/[\r\n]+/g, ' ').replace(/\s+/g, ' ').trim());
+                                  if (cand.addressDong && cand.addressDong.trim()) {
+                                    parts.push(cand.addressDong.replace(/[\r\n]+/g, ' ').replace(/\s+/g, ' ').trim());
+                                  }
+                                  if (cand.addressDetail) parts.push(cand.addressDetail.replace(/[\r\n]+/g, ' ').replace(/\s+/g, ' ').trim());
+                                  return parts.join(' ').replace(/\s+/g, ' ').trim() || '시/도 상세 주소 없음';
+                                })()}
+                              </span>
+                            </div>
+                          </div>
+
+                          {/* Contact */}
+                          <div className="w-[110px] pl-2 text-left shrink-0">
+                            {(() => {
+                              const parsedPhones = formatPhoneNumbers(cand.phone);
+                              if (parsedPhones.length > 0) {
+                                return (
+                                  <div className="flex flex-col gap-1 w-full text-[10px]">
+                                    {parsedPhones.map((phone, pIdx) => (
+                                      <div key={pIdx} className="flex gap-1 px-1.5 py-0.5 bg-slate-100/90 border border-slate-200/60 rounded text-slate-800 items-center justify-start shrink-0">
+                                        <Phone className="w-2 h-2 text-slate-400 shrink-0" />
+                                        <span className="text-[9px] font-mono leading-tight whitespace-normal font-bold">{phone}</span>
+                                      </div>
+                                    ))}
+                                  </div>
+                                );
+                              }
+                              return <span className="text-slate-300 text-[10px]">-</span>;
+                            })()}
+                          </div>
+                        </div>
+                      </div>
+
                     </td>
 
-                    {/* Combined Service description & Special notes */}
-                    <td className="py-2.5 px-2 max-w-[220px] leading-snug align-middle">
-                      <div className="space-y-1">
+                    {/* Combined Service description & Special notes (Fully visible with elegant larger size text-[13px]) */}
+                    <td className="py-3 px-3 leading-relaxed align-top w-[240px] text-[13px]">
+                      <div className="space-y-2">
                         {cand.serviceContent ? (
-                          <div className="text-slate-700 font-medium whitespace-pre-wrap break-all">
+                          <div className="text-slate-800 font-medium whitespace-pre-wrap break-all leading-relaxed text-[13px]">
                             {cand.serviceContent}
                           </div>
                         ) : (
                           <span className="text-slate-300 text-xs">-</span>
                         )}
                         {cand.specialNotes && (
-                          <div className="text-[10px] text-rose-600 bg-rose-50/50 p-1 rounded border border-rose-100/40 break-all whitespace-pre-wrap">
-                            <strong>*특이사항:</strong> {cand.specialNotes}
+                          <div className="text-[11.5px] text-rose-700 bg-rose-50 border border-rose-100 rounded-lg p-2.5 break-all whitespace-pre-wrap leading-normal shadow-sm">
+                            <strong className="font-semibold">*특이사항:</strong> {cand.specialNotes}
                           </div>
                         )}
                       </div>
                     </td>
 
-                    {/* Additional logs */}
-                    <td className="py-2.5 px-2 max-w-[220px] leading-snug align-middle">
+                    {/* Additional logs (Fully rendered by Date Ascending - 위에서 밑으로 흘러감 with larger base size) */}
+                    <td className="py-3 px-3 leading-relaxed align-top w-[280px] text-[13px]">
                       {cand.consultationLogs && cand.consultationLogs.length > 0 ? (
-                        <div className="space-y-1.5">
-                          {cand.consultationLogs.slice(0, 3).map((log) => {
-                            // Highlight log if it triggers the selectedYear
-                            const isYearTrigger = selectedYear !== '전체' && log.date.startsWith(selectedYear);
-                            return (
-                              <div 
-                                key={log.id} 
-                                className={`text-[10px] border-l-2 pl-1.5 transition-all ${
-                                  isYearTrigger 
-                                    ? 'border-emerald-500 text-emerald-900 bg-emerald-50/50 p-1 rounded-r-lg' 
-                                    : 'border-slate-200 text-slate-500'
-                                }`}
-                              >
-                                <span className="font-bold text-[9px] block mb-0.5">{log.date}</span>
-                                <span className="line-clamp-2 leading-tight break-all whitespace-pre-wrap">{log.content}</span>
-                              </div>
-                            );
-                          })}
-                          {cand.consultationLogs.length > 3 && (
-                            <span className="text-[9px] text-slate-400 font-bold block mt-0.5 hover:text-emerald-600 cursor-pointer print:hidden" onClick={() => onSelect(cand)}>
-                              외 {cand.consultationLogs.length - 3}개 이력 더보기 →
-                            </span>
-                          )}
+                        <div className="space-y-2.5">
+                          {[...cand.consultationLogs]
+                            .sort((a, b) => a.date.localeCompare(b.date))
+                            .map((log) => {
+                              const isYearTrigger = selectedYear !== '전체' && log.date.startsWith(selectedYear);
+                              return (
+                                <div 
+                                  key={log.id} 
+                                  className={`text-[12.5px] border-l-2 pl-2.5 py-1 transition-all leading-relaxed ${
+                                    isYearTrigger 
+                                      ? 'border-emerald-500 text-emerald-990 bg-emerald-50/60 p-1.5 rounded-r-lg font-semibold' 
+                                      : 'border-slate-300 text-slate-750 hover:border-emerald-300'
+                                  }`}
+                                >
+                                  <span className="font-bold text-[10px] text-slate-400 block mb-0.5">{log.date}</span>
+                                  <span className="break-all whitespace-pre-wrap leading-relaxed">{log.content}</span>
+                                </div>
+                              );
+                            })}
                         </div>
                       ) : (
-                        <span className="text-slate-300 text-[10px] whitespace-nowrap">상담 이력 없음</span>
+                        <span className="text-slate-300 text-[11px] whitespace-nowrap">상담 이력 없음</span>
                       )}
                     </td>
 
                     {/* Matching status O/X column */}
-                    <td className="py-2.5 px-1.5 text-center align-middle">
-                      <span className={`inline-block px-2 py-0.5 text-xs font-black rounded-lg border-2 ${
-                        matchedVal === 'O' 
-                          ? 'bg-emerald-500/10 text-emerald-600 border-emerald-500/20' 
-                          : 'bg-rose-500/10 text-rose-500 border-rose-500/20'
-                      }`}>
-                        {matchedVal}
-                      </span>
+                    <td className="py-3 px-2 text-center align-top w-[65px]">
+                      <div className="pt-2">
+                        <span className={`inline-block px-2 py-0.5 text-xs font-black rounded-lg border-2 ${
+                          matchedVal === 'O' 
+                            ? 'bg-emerald-500/10 text-emerald-600 border-emerald-500/20' 
+                            : 'bg-rose-500/10 text-rose-500 border-rose-500/20'
+                        }`}>
+                          {matchedVal}
+                        </span>
+                      </div>
                     </td>
 
                     {/* Quick CRUD action items (Hidden in Print) */}
-                    <td className="py-2.5 px-1.5 text-center print:hidden align-middle">
-                      <div className="flex flex-row items-center justify-center flex-nowrap whitespace-nowrap gap-1 opacity-60 group-hover:opacity-100 transition-opacity">
+                    <td className="py-3 px-2 text-center print:hidden align-top w-[100px]">
+                      <div className="pt-2 flex flex-col items-center justify-center gap-1.5 opacity-60 group-hover:opacity-100 transition-opacity">
                         <button
-                          type="button"
-                          onClick={() => onSelect(cand)}
-                          className="px-2 py-1 text-[10px] font-bold text-emerald-700 bg-emerald-50 border border-emerald-150 hover:bg-emerald-600 hover:text-white rounded-md transition-all flex items-center gap-0.5 cursor-pointer"
-                          title="상담 관리 및 수정"
+                           type="button"
+                           onClick={() => onSelect(cand)}
+                           className="w-full px-2 py-1 text-[10px] font-bold text-emerald-750 bg-emerald-50 border border-emerald-150 hover:bg-emerald-600 hover:text-white rounded transition-all flex items-center justify-center gap-1 cursor-pointer"
+                           title="상담 관리 및 수정"
                         >
                           <Edit className="w-2.5 h-2.5" />
                           수정
                         </button>
                         <button
-                          type="button"
-                          onClick={() => onDelete(cand.id)}
-                          className="px-2 py-1 text-[10px] font-bold text-rose-700 bg-rose-50 border border-rose-150 hover:bg-rose-600 hover:text-white rounded-md transition-all flex items-center gap-0.5 cursor-pointer"
-                          title="영구 삭제"
+                           type="button"
+                           onClick={() => onDelete(cand.id)}
+                           className="w-full px-2 py-1 text-[10px] font-bold text-rose-750 bg-rose-50 border border-rose-150 hover:bg-rose-600 hover:text-white rounded transition-all flex items-center justify-center gap-1 cursor-pointer"
+                           title="영구 삭제"
                         >
                           <Trash className="w-2.5 h-2.5" />
                           삭제
@@ -486,7 +591,7 @@ export default function CandidateTable({
               })
             ) : (
               <tr>
-                <td colSpan={17} className="py-12 bg-white text-center text-slate-400 font-medium">
+                <td colSpan={5} className="py-12 bg-white text-center text-slate-400 font-medium">
                   {searchTerm ? '검색 필터와 완벽 매칭된 접수자가 부재합니다.' : '해당 필터 조건에 응답하는 이용대기자가 등록되지 않았습니다.'}
                 </td>
               </tr>

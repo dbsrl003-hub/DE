@@ -7,6 +7,7 @@ import React, { useState, useEffect } from 'react';
 import { Candidate, CategoryType, ConsultationLog } from '../types';
 import { X, Save, Calendar, Plus, Trash2, Heart, Shield, PlusCircle, CheckSquare, Sparkles, Navigation } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
+import { parseBirthDateToYYMMDD } from './ExcelImporter';
 
 interface CandidateDetailModalProps {
   candidate: Candidate | null;
@@ -45,7 +46,7 @@ export default function CandidateDetailModal({
         registrationDate: new Date().toISOString().split('T')[0],
         registrar: '',
         name: '',
-        birthDate: '1990-01-01',
+        birthDate: '',
         gender: '남',
         disabilityType: '',
         disabilityGrade: '',
@@ -131,7 +132,21 @@ export default function CandidateDetailModal({
       return;
     }
 
-    onSave(formData as Candidate);
+    // Standardize birthDate to YYMMDD
+    const rawBirth = formData.birthDate || '';
+    const birthVal = parseBirthDateToYYMMDD(rawBirth);
+
+    // Clean disabilityGrade from '미분류' or '미지정'
+    const rawGrade = formData.disabilityGrade || '';
+    const cleanedGrade = (rawGrade === '미분류' || rawGrade === '미지정') ? '' : rawGrade;
+
+    const finalData = {
+      ...formData,
+      birthDate: birthVal,
+      disabilityGrade: cleanedGrade
+    };
+
+    onSave(finalData as Candidate);
     onClose();
   };
 
@@ -264,8 +279,9 @@ export default function CandidateDetailModal({
                   <div>
                     <label className="block text-xs font-semibold text-slate-500 mb-1">생년월일</label>
                     <input
-                      type="date"
+                      type="text"
                       name="birthDate"
+                      placeholder="생년월일 (예시: 940322)"
                       value={formData.birthDate || ''}
                       onChange={handleInputChange}
                       className="w-full text-xs p-2.5 border border-slate-200 rounded-lg focus:ring-1 focus:ring-emerald-500 outline-none bg-slate-50/50"
