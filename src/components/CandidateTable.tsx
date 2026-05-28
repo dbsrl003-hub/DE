@@ -214,7 +214,7 @@ export default function CandidateTable({
 
       {/* Main Table Area */}
       <div className="overflow-x-auto print:overflow-visible">
-        <table className="w-full border-collapse text-left text-[11px] min-w-[1100px] print:min-w-full">
+        <table className="w-full border-collapse text-left text-[11px] min-w-[1650px] print:min-w-full">
           <thead>
             {/* Headers */}
             <tr className="bg-slate-50/85 text-slate-600 border-b border-rose-100 font-bold print:bg-white text-[11px] whitespace-nowrap">
@@ -244,10 +244,10 @@ export default function CandidateTable({
               <th className="py-2.5 px-1 text-center w-12 align-middle text-emerald-800">국비</th>
               <th className="py-2.5 px-1 text-center w-12 align-middle text-sky-800">도비</th>
               <th className="py-2.5 px-1 text-center w-12 align-middle text-purple-800">시비</th>
-              <th className="py-2.5 px-2 w-48 align-middle">주소</th>
-              <th className="py-2.5 px-1.5 w-24 align-middle">연락처</th>
-              <th className="py-2.5 px-2 w-56 align-middle">서비스 내용 (*특이사항)</th>
-              <th className="py-2.5 px-2 w-56 align-middle">추가상담</th>
+              <th className="py-2.5 px-2 w-64 min-w-[260px] align-middle text-slate-700">주소</th>
+              <th className="py-2.5 px-1.5 w-28 align-middle">연락처</th>
+              <th className="py-2.5 px-2 w-64 align-middle">서비스 내용 (*특이사항)</th>
+              <th className="py-2.5 px-2 w-64 align-middle">추가상담</th>
               <th className="py-2.5 px-1.5 text-center w-16 align-middle">매칭여부</th>
               <th className="py-2.5 px-1.5 text-center w-24 print:hidden align-middle">관리액션</th>
             </tr>
@@ -366,19 +366,16 @@ export default function CandidateTable({
                     </td>
 
                     {/* Address Column */}
-                    <td className="py-2.5 px-2 text-slate-600 leading-normal max-w-[190px] align-middle">
+                    <td className="py-2.5 px-2 text-slate-700 leading-normal w-64 min-w-[260px] align-middle">
                       <div className="flex gap-1 items-start">
                         <MapPin className="w-3 h-3 text-slate-400 shrink-0 mt-0.5 print:hidden" />
-                        <span className="break-all leading-tight">
+                        <span className="keep-all break-keep whitespace-normal leading-relaxed text-xs">
                           {(() => {
                             const parts = [];
                             if (cand.addressCity) parts.push(cand.addressCity.trim());
                             if (cand.addressDistrict) parts.push(cand.addressDistrict.trim());
                             if (cand.addressDong && cand.addressDong.trim()) {
-                              const tdong = cand.addressDong.trim();
-                              if (tdong.endsWith('동') || tdong.endsWith('읍') || tdong.endsWith('면')) {
-                                parts.push(tdong);
-                              }
+                              parts.push(cand.addressDong.trim());
                             }
                             if (cand.addressDetail) parts.push(cand.addressDetail.trim());
                             return parts.join(' ').replace(/\s+/g, ' ').trim() || '시/도 상세 주소 없음';
