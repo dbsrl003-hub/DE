@@ -27,6 +27,7 @@ export default function CandidateDetailModal({
   const [newLogDate, setNewLogDate] = useState('');
   const [newLogContent, setNewLogContent] = useState('');
   const [activeTab, setActiveTab] = useState<'info' | 'logs'>('info');
+  const [innerConfirm, setInnerConfirm] = useState<{ message: string; onConfirm: () => void; } | null>(null);
 
   useEffect(() => {
     if (candidate) {
@@ -107,13 +108,17 @@ export default function CandidateDetailModal({
   };
 
   const handleDeleteLog = (logId: string) => {
-    if (!window.confirm('이 상담 기록을 삭제하시겠습니까?')) return;
-    const currentLogs = formData.consultationLogs || [];
-    const updatedLogs = currentLogs.filter(log => log.id !== logId);
-    setFormData(prev => ({
-      ...prev,
-      consultationLogs: updatedLogs
-    }));
+    setInnerConfirm({
+      message: '이 상담 기록 일지를 정말 삭제하시겠습니까?',
+      onConfirm: () => {
+        const currentLogs = formData.consultationLogs || [];
+        const updatedLogs = currentLogs.filter(log => log.id !== logId);
+        setFormData(prev => ({
+          ...prev,
+          consultationLogs: updatedLogs
+        }));
+      }
+    });
   };
 
   const handleSave = () => {
@@ -431,16 +436,6 @@ export default function CandidateDetailModal({
                       className="w-full text-xs p-2.5 border border-slate-200 rounded-lg outline-none focus:ring-1 focus:ring-emerald-500"
                     />
                   </div>
-                  
-                  {/* Full preview of dynamically combined address */}
-                  <div className="bg-slate-50 p-2.5 rounded-lg text-xs border border-slate-100 font-mono text-slate-600">
-                    <span className="font-bold text-slate-500 block text-[10px] uppercase mb-0.5">합산된 전체 주소 출력 형태</span>
-                    {formData.addressCity || formData.addressDistrict || formData.addressDong || formData.addressDetail ? (
-                      `${formData.addressCity || ''} ${formData.addressDistrict || ''} ${formData.addressDong || ''} ${formData.addressDetail || ''}`.replace(/\s+/g, ' ').trim()
-                    ) : (
-                      '주소를 작성하여 결합해주세요'
-                    )}
-                  </div>
                 </div>
 
               </div>
@@ -464,7 +459,7 @@ export default function CandidateDetailModal({
                     />
                   </div>
                   <div>
-                    <label className="block text-xs font-semibold text-slate-500 mb-1.5">장애 특이사항 (이동 및 행동 특이사항)</label>
+                    <label className="block text-xs font-semibold text-slate-500 mb-1.5">특이사항</label>
                     <textarea
                       name="specialNotes"
                       rows={3}
@@ -589,10 +584,13 @@ export default function CandidateDetailModal({
               <button
                 type="button"
                 onClick={() => {
-                  if (window.confirm(`${formData.name}님의 대기 자격 기록 전체를 삭제처리 하실 건가요? (삭제탭으로 임시 분류 이동을 추천드립니다)`)) {
-                    onDelete(formData.id!);
-                    onClose();
-                  }
+                  setInnerConfirm({
+                    message: `${formData.name} 이용자의 가용 대기 기록을 명단 데이터베이스에서 영구적으로 완전히 삭제하시겠습니까? (복구할 수 없습니다)`,
+                    onConfirm: () => {
+                      onDelete(formData.id!);
+                      onClose();
+                    }
+                  });
                 }}
                 className="px-4 py-2 text-xs font-bold text-rose-500 bg-rose-50 hover:bg-rose-100 rounded-xl transition-all"
               >
@@ -620,6 +618,48 @@ export default function CandidateDetailModal({
         </div>
 
       </div>
+
+      {/* Inner confirm overlay */}
+      <AnimatePresence>
+        {innerConfirm && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/60 backdrop-blur-xs">
+            <motion.div
+              initial={{ scale: 0.95, opacity: 0 }}
+              animate={{ scale: 1, opacity: 1 }}
+              exit={{ scale: 0.95, opacity: 0 }}
+              className="bg-white rounded-2xl max-w-sm w-full p-6 shadow-2xl border border-slate-100 space-y-4 text-center z-50"
+            >
+              <div className="w-10 h-10 rounded-full bg-rose-50 text-rose-500 flex items-center justify-center mx-auto">
+                <Trash2 className="w-5 h-5 flex-shrink-0" />
+              </div>
+              <h4 className="text-sm font-black text-slate-800">이용대기 기록 가상 영구 삭제</h4>
+              <p className="text-xs text-slate-500 leading-relaxed text-left bg-slate-50 p-3 rounded-lg border border-slate-100 font-medium">
+                {innerConfirm.message}
+              </p>
+              <div className="flex gap-2">
+                <button
+                  type="button"
+                  onClick={() => setInnerConfirm(null)}
+                  className="flex-1 py-2 rounded-lg border border-slate-200 text-slate-600 hover:bg-slate-50 text-[11px] font-bold transition-all cursor-pointer"
+                >
+                  취소
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    innerConfirm.onConfirm();
+                    setInnerConfirm(null);
+                  }}
+                  className="flex-1 py-2 rounded-lg bg-rose-600 hover:bg-rose-700 text-white text-[11px] font-bold transition-all cursor-pointer"
+                >
+                  삭제 확인
+                </button>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
     </div>
   );
 }

@@ -4,6 +4,7 @@
  */
 
 import React, { useState, useEffect } from 'react';
+import XLSX from 'xlsx-js-style';
 import { Candidate, CategoryType } from './types';
 import { INITIAL_CANDIDATES } from './data/sampleData';
 import CandidateTable from './components/CandidateTable';
@@ -22,6 +23,8 @@ import {
   FileDown,
   ChevronRight,
   TrendingDown,
+  Trash2,
+  AlertTriangle,
   Info
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
@@ -32,6 +35,7 @@ export default function App() {
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [editingCandidate, setEditingCandidate] = useState<Candidate | null>(null);
   const [showImporter, setShowImporter] = useState(false);
+  const [confirmDialog, setConfirmDialog] = useState<{ isOpen: boolean; title: string; message: string; onConfirm: () => void; } | null>(null);
 
   // Initialize data from localStorage or initial templates
   useEffect(() => {
@@ -86,10 +90,30 @@ export default function App() {
     updateCandidatesList(updatedList);
   };
 
-  // Delete a candidate entry
+  // Switch category status directly from list view
+  const handleUpdateCategory = (id: string, category: CategoryType) => {
+    const updatedList = candidates.map(c => {
+      if (c.id === id) {
+        return { ...c, category };
+      }
+      return c;
+    });
+    updateCandidatesList(updatedList);
+  };
+
+  // Delete a candidate entry with custom overlay confirm option
   const handleDeleteCandidate = (id: string) => {
-    const filtered = candidates.filter(c => c.id !== id);
-    updateCandidatesList(filtered);
+    const cand = candidates.find(c => c.id === id);
+    const name = cand ? cand.name : '이용대기자';
+    setConfirmDialog({
+      isOpen: true,
+      title: '대기 기록 영구 삭제',
+      message: `정말로 ${name} 이용자의 소중한 대기 기록을 명단에서 아예 완전히(영구히) 삭제하시겠습니까? 이 작업은 등록 파일을 완전히 삭제하며 되돌릴 수 없습니다.`,
+      onConfirm: () => {
+        const filtered = candidates.filter(c => c.id !== id);
+        updateCandidatesList(filtered);
+      }
+    });
   };
 
   // Mass Import handler
@@ -100,41 +124,67 @@ export default function App() {
     setShowImporter(false);
   };
 
-  // Export to Excel / CSV with proper Korean BOM (\uFEFF)
-  const handleExportCSV = () => {
+  // Helper to calculate last consultation log matching status
+  const getLastLogMatching = (candidate: Candidate): 'O' | 'X' => {
+    if (!candidate.consultationLogs || candidate.consultationLogs.length === 0) return 'X';
+    const sortedLogs = [...candidate.consultationLogs].sort((a, b) => a.date.localeCompare(b.date));
+    const lastLog = sortedLogs[sortedLogs.length - 1];
+    if (!lastLog) return 'X';
+    const text = lastLog.content || '';
+    
+    const hasServiceStart = text.includes('서비스 시작') || text.includes('서비스시작');
+    const hasConnection = text.includes('연계'); 
+    const hasOtherConnection = text.includes('타기관 연계') || text.includes('타기관연계');
+    const hasReWait = text.includes('재대기');
+    const hasEnd = text.includes('종결');
+    const hasConfirm = text.includes('상황 확인') || text.includes('상황확인');
+    const hasHope = text.includes('희망');
+    
+    if (hasOtherConnection || hasReWait || hasEnd || hasConfirm || hasHope) {
+      return 'X';
+    }
+    
+    if (hasServiceStart || (hasConnection && !hasOtherConnection)) {
+      return 'O';
+    }
+    
+    return 'X';
+  };
+
+  // Export to Styled Excel (.xlsx) file, center-aligned except column 15 & 16, with auto-fitting widths
+  const handleExportExcel = () => {
     const listToExport = getCandidatesByYear(selectedYear);
     if (listToExport.length === 0) {
       alert('다운로드할 명단 데이터가 해당 연도에 존재하지 않습니다.');
       return;
     }
 
-    // Header structure requested by user:
-    // 순번, 구분, 최초접수일, 접수자, 이용자성명, 생년월일, 성별, 장애유형, 급수, 국비, 도비, 시비, 주소, 연락처, 서비스내용, 추가 상담 내역
+    // Precise Korean columns requested by user:
     const headers = [
-      '순번', '구분', '최초접수일', '접수자', '이용자성명', '생년월일', '성별', '장애유형', '급수', '국비', '도비', '시비', '주소', '연락처', '서비스내용', '추가 상담 내역'
+      '순번', '구분', '접수일', '접수자', '성명', '생년월일', '성별', '장애유형', '급수', '국비', '도비', '시비', '주소', '연락처', '서비스내용', '추가상담', '매칭여부'
     ];
 
     const rows = listToExport.map((cand, idx) => {
-      // Combined Address
-      const combinedAddress = `${cand.addressCity} ${cand.addressDistrict} ${cand.addressDong} ${cand.addressDetail}`.replace(/\s+/g, ' ').trim();
-      
-      // Combined Service Contents: "서비스내용과 특이사항데이터도 합쳐서 서비스 내용에 넣어줘. 서비스 내용이 위로가고 특이사항이 밑으로 가게"
-      const serviceCombined = `${cand.serviceContent || ''}${cand.specialNotes ? `\n[특이사항]: ${cand.specialNotes}` : ''}`.trim();
+      // Smart address combination with "OO동" inclusion rule
+      const addressParts = [];
+      if (cand.addressCity) addressParts.push(cand.addressCity.trim());
+      if (cand.addressDistrict) addressParts.push(cand.addressDistrict.trim());
+      if (cand.addressDong && cand.addressDong.trim()) {
+        const tDong = cand.addressDong.trim();
+        if (tDong.endsWith('동') || tDong.endsWith('읍') || tDong.endsWith('면')) {
+          addressParts.push(tDong);
+        }
+      }
+      if (cand.addressDetail) addressParts.push(cand.addressDetail.trim());
+      const combinedAddress = addressParts.join(' ').replace(/\s+/g, ' ').trim();
 
-      // Combined Logs
+      const serviceCombined = `${cand.serviceContent || ''}${cand.specialNotes ? `\n[특이사항]: ${cand.specialNotes}` : ''}`.trim();
+      
       const logsCombined = cand.consultationLogs && cand.consultationLogs.length > 0 
-        ? cand.consultationLogs.map(l => `[${l.date}] ${l.content}`).join(' \r\n ')
+        ? cand.consultationLogs.map(l => `[${l.date}] ${l.content}`).join('\r\n')
         : '상담기록 없음';
 
-      // Excel safe values (escape quotes and commas)
-      const escapeCsvCell = (val: string) => {
-        if (typeof val !== 'string') return val;
-        let formatted = val.replace(/"/g, '""');
-        if (formatted.includes(',') || formatted.includes('\n') || formatted.includes('\r')) {
-          return `"${formatted}"`;
-        }
-        return `"${formatted}"`; // Wrap all texts inside double quotes for safety
-      };
+      const matchedVal = getLastLogMatching(cand);
 
       return [
         idx + 1,
@@ -146,34 +196,102 @@ export default function App() {
         cand.gender,
         cand.disabilityType || '미지정',
         cand.disabilityGrade || '미상',
-        cand.fundingNational ? 'O' : 'X',
-        cand.fundingProvincial ? 'O' : 'X',
-        cand.fundingCity ? 'O' : 'X',
-        escapeCsvCell(combinedAddress),
-        cand.phone,
-        escapeCsvCell(serviceCombined),
-        escapeCsvCell(logsCombined)
+        cand.fundingNational || '-',
+        cand.fundingProvincial || '-',
+        cand.fundingCity || '-',
+        combinedAddress || '-',
+        cand.phone || '-',
+        serviceCombined || '-',
+        logsCombined,
+        matchedVal
       ];
     });
 
-    const csvContent = [headers.join(','), ...rows.map(r => r.join(','))].join('\n');
-    
-    // UTF-8 BOM indicator \uFEFF keeps Korean text perfect in standard Excel!
-    const blob = new Blob(['\uFEFF' + csvContent], { type: 'text/csv;charset=utf-8;' });
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement('a');
-    link.setAttribute('href', url);
-    
+    const aoa = [headers, ...rows];
+    const ws = XLSX.utils.aoa_to_sheet(aoa);
+
+    // Calculate columns widths based on content lengths
+    const colWidths = headers.map((header, colIdx) => {
+      let maxLength = 0;
+      for (let i = 0; i < header.length; i++) {
+        maxLength += header.charCodeAt(i) > 127 ? 2 : 1;
+      }
+      maxLength += 4; // Add comfortable layout buffer of 4 characters
+
+      rows.forEach((row) => {
+        const val = row[colIdx];
+        if (val !== null && val !== undefined) {
+          const valStr = String(val);
+          let charLength = 0;
+          for (let i = 0; i < valStr.length; i++) {
+            charLength += valStr.charCodeAt(i) > 127 ? 2 : 1;
+          }
+          if (charLength > maxLength) {
+            maxLength = charLength;
+          }
+        }
+      });
+
+      // Special wrap settings for heavy descriptive texts (Index 14: 서비스내용, Index 15: 추가상담)
+      if (colIdx === 14) return { wch: 40 };
+      if (colIdx === 15) return { wch: 45 };
+      return { wch: Math.min(Math.max(maxLength + 2, 7), 55) };
+    });
+    ws['!cols'] = colWidths;
+
+    // Apply stunning and high-craftsmanship cells alignments and styles
+    for (const key in ws) {
+      if (key.startsWith('!')) continue;
+      const cell = ws[key];
+      if (!cell) continue;
+
+      const colLetter = key.replace(/[0-9]/g, '');
+      const rowNum = parseInt(key.replace(/[^0-9]/g, ''), 10);
+      const isHeader = rowNum === 1;
+
+      let colIndex = 0;
+      if (colLetter.length === 1) {
+        colIndex = colLetter.charCodeAt(0) - 65;
+      } else if (colLetter.length === 2) {
+        colIndex = (colLetter.charCodeAt(0) - 65 + 1) * 26 + (colLetter.charCodeAt(1) - 65);
+      }
+
+      // Center all cells except: Column Index 14 (서비스내용) and 15 (추가상담)
+      const isLeftAligned = colIndex === 14 || colIndex === 15;
+
+      cell.s = {
+        font: {
+          name: '맑은 고딕',
+          sz: isHeader ? 10.5 : 9.5,
+          bold: isHeader,
+          color: isHeader ? { rgb: 'FFFFFF' } : { rgb: '1E293B' }
+        },
+        fill: {
+          fgColor: isHeader ? { rgb: '059669' } : (rowNum % 2 === 0 ? { rgb: 'F8FAFC' } : { rgb: 'FFFFFF' })
+        },
+        alignment: {
+          horizontal: isHeader ? 'center' : (isLeftAligned ? 'left' : 'center'),
+          vertical: 'center',
+          wrapText: true
+        },
+        border: {
+          top: { style: 'thin', color: { rgb: 'CBD5E1' } },
+          bottom: { style: 'thin', color: { rgb: 'CBD5E1' } },
+          left: { style: 'thin', color: { rgb: 'CBD5E1' } },
+          right: { style: 'thin', color: { rgb: 'CBD5E1' } }
+        }
+      };
+    }
+
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, '이용대기명단');
+
     const displayYear = selectedYear === '전체' ? '전체연도' : `${selectedYear}년도`;
     const formatToday = new Date().toISOString().split('T')[0];
-    link.setAttribute('download', `이용대기명단정리_${displayYear}_${formatToday}.csv`);
-    link.style.visibility = 'hidden';
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
+    XLSX.writeFile(wb, `이용대기명단정리_${displayYear}_${formatToday}.xlsx`);
   };
 
-  // Print function
+  // Clean direct native print invocation
   const handlePrint = () => {
     window.print();
   };
@@ -185,7 +303,7 @@ export default function App() {
       
       {/* APP TITLE / HEADER AREA (Hidden on print) */}
       <header className="bg-white border-b border-slate-100 shadow-sm shrink-0 print:hidden sticky top-0 z-40">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-4 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+        <div className="max-w-[1650px] mx-auto px-4 sm:px-6 lg:px-8 py-4 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
           
           {/* Logo & Title */}
           <div className="flex items-center gap-3">
@@ -224,7 +342,7 @@ export default function App() {
             </button>
 
             <button
-              onClick={handleExportCSV}
+              onClick={handleExportExcel}
               className="px-4 py-2 text-xs font-bold text-slate-600 bg-white hover:bg-slate-50 border border-slate-200 rounded-xl transition-all flex items-center gap-1.5"
               title="이용 대기 현황 인쇄"
             >
@@ -245,7 +363,7 @@ export default function App() {
       </header>
 
       {/* DYNAMIC CONTENT CONTAINER */}
-      <main className="flex-1 max-w-7xl w-full mx-auto p-4 sm:p-6 lg:p-8 space-y-6">
+      <main className="flex-1 max-w-[1650px] w-full mx-auto p-4 sm:p-6 lg:p-8 space-y-6">
         
         {/* YEAR SELECTION TABS & LIVE STATISTICS CARDS (Hidden on print) */}
         <section className="space-y-4 print:hidden">
@@ -374,6 +492,7 @@ export default function App() {
               setEditingCandidate(cand);
               setIsModalOpen(true);
             }}
+            onUpdateCategory={handleUpdateCategory}
             onDelete={handleDeleteCandidate}
             selectedYear={selectedYear}
           />
@@ -383,7 +502,7 @@ export default function App() {
 
       {/* FOOTER (Hidden on print) */}
       <footer className="bg-white border-t border-slate-100 py-6 text-center text-xs text-slate-400 print:hidden mt-auto">
-        <div className="max-w-7xl mx-auto px-4 flex flex-col sm:flex-row items-center justify-between gap-4">
+        <div className="max-w-[1650px] mx-auto px-4 flex flex-col sm:flex-row items-center justify-between gap-4">
           <p>© 2026 복지 기관 이용대기명단 관리 센터. All rights reserved.</p>
           <div className="flex gap-4 text-slate-400">
             <span>로컬 데이터 상시 세이브 저장됨</span>
@@ -404,6 +523,51 @@ export default function App() {
         onSave={handleSaveCandidate}
         onDelete={handleDeleteCandidate}
       />
+
+      {/* PERFECT CUSTOM IN-APP CONFIRMATION DIALOG */}
+      <AnimatePresence>
+        {confirmDialog && confirmDialog.isOpen && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-905/60 backdrop-blur-xs">
+            <motion.div 
+              initial={{ scale: 0.95, opacity: 0 }}
+              animate={{ scale: 1, opacity: 1 }}
+              exit={{ scale: 0.95, opacity: 0 }}
+              className="bg-white rounded-2xl max-w-sm w-full shadow-2xl border border-slate-100 overflow-hidden z-50"
+            >
+              <div className="p-6 text-center space-y-4">
+                <div className="w-12 h-12 rounded-full bg-rose-50 text-rose-500 flex items-center justify-center mx-auto border border-rose-100">
+                  <AlertTriangle className="w-6 h-6 shrink-0" />
+                </div>
+                
+                <h3 className="text-base font-black text-slate-800">{confirmDialog.title}</h3>
+                <p className="text-xs text-slate-500 leading-relaxed font-semibold">
+                  {confirmDialog.message}
+                </p>
+
+                <div className="flex gap-2.5 pt-2">
+                  <button
+                    type="button"
+                    onClick={() => setConfirmDialog(null)}
+                    className="flex-1 py-2 rounded-xl border border-slate-200 text-slate-600 hover:bg-slate-50 text-xs font-bold transition-all cursor-pointer"
+                  >
+                    취소
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      confirmDialog.onConfirm();
+                      setConfirmDialog(null);
+                    }}
+                    className="flex-1 py-2 rounded-xl bg-rose-600 hover:bg-rose-705 text-white text-xs font-bold transition-all shadow-md shadow-rose-650/10 cursor-pointer"
+                  >
+                    삭제 실행
+                  </button>
+                </div>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
 
     </div>
   );
