@@ -4,8 +4,9 @@
  */
 
 import React, { useState, useRef } from 'react';
+import XLSX from 'xlsx-js-style';
 import { Candidate, CategoryType, ConsultationLog } from '../types';
-import { Upload, Clipboard, Info, Check, AlertCircle, RefreshCw } from 'lucide-react';
+import { Upload, Clipboard, Info, Check, AlertCircle, RefreshCw, FileText } from 'lucide-react';
 import { motion } from 'motion/react';
 
 interface ExcelImporterProps {
@@ -14,267 +15,50 @@ interface ExcelImporterProps {
 
 export default function ExcelImporter({ onImport }: ExcelImporterProps) {
   const [inputText, setInputText] = useState('');
-  const [importType, setImportType] = useState<'paste' | 'file'>('paste');
+  const [importType, setImportType] = useState<'paste' | 'file'>('file'); // default to file drag-and-drop
   const [parsedCount, setParsedCount] = useState<number | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
-  const [previewData, setPreviewData] = useState<Partial<Candidate>[]>([]);
+  const [previewData, setPreviewData] = useState<Candidate[]>([]);
+  const [pendingImportData, setPendingImportData] = useState<Candidate[]>([]);
+  const [isDragging, setIsDragging] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  const expectedHeaders = [
-    '구분', '접수일', '접수자', '성명', '생년월일', '성별', 
-    '장애유형', '급수', '복합장애', '국비', '도비', '시비', 
-    '시', '구', '동', '세부주소', '연락처', '서비스내용', 
-    '특이사항', '상담내역', '비고'
-  ];
-
-  const handleTextChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
-    const text = e.target.value;
-    setInputText(text);
-    setErrorMessage(null);
-    if (!text.trim()) {
-      setPreviewData([]);
-      setParsedCount(null);
-      return;
-    }
-    parsePreview(text);
-  };
-
-  // Helper to parse CSV or TSV string
-  const parseDataString = (text: string): Candidate[] => {
-    const rows = text.split(/\r?\n/).filter(line => line.trim() !== '');
-    if (rows.length === 0) return [];
-
-    // Detect separator (Tab if TSV, comma if CSV)
-    const firstRow = rows[0];
-    const isTab = firstRow.includes('\t');
-    const separator = isTab ? '\t' : ',';
-
-    // Parse each line (respecting quotes in case of CSV)
-    const parseLine = (line: string): string[] => {
-      if (isTab) {
-        return line.split('\t').map(cell => cell.trim().replace(/^"|"$/g, ''));
-      }
-      // Simple CSV cell parsing with quote handling
-      const result: string[] = [];
-      let current = '';
-      let inQuotes = false;
-      for (let i = 0; i < line.length; i++) {
-        const char = line[i];
-        if (char === '"') {
-          inQuotes = !inQuotes;
-        } else if (char === ',' && !inQuotes) {
-          result.push(current.trim());
-          current = '';
-        } else {
-          current += char;
-        }
-      }
-      result.push(current.trim());
-      return result.map(cell => cell.replace(/^"|"$/g, ''));
-    };
-
-    const headerFields = parseLine(rows[0]);
+  const formatExcelDate = (val: any): string => {
+    if (!val) return '2026-05-28';
     
-    // Check if the first row is actually a header row
-    const hasHeader = headerFields.some(field => 
-      expectedHeaders.some(expected => field.includes(expected) || expected.includes(field))
-    );
-
-    const startIndex = hasHeader ? 1 : 0;
-    
-    // Default mapping index maps
-    let map: Record<string, number> = {};
-    
-    if (hasHeader) {
-      headerFields.forEach((field, idx) => {
-        const cleanField = field.replace(/\s+/g, '');
-        if (cleanField.includes('구분')) map.category = idx;
-        else if (cleanField.includes('접수일')) map.registrationDate = idx;
-        else if (cleanField.includes('접수자')) map.registrar = idx;
-        else if (cleanField.includes('성명') || cleanField.includes('이름')) map.name = idx;
-        else if (cleanField.includes('생년')) map.birthDate = idx;
-        else if (cleanField.includes('성별')) map.gender = idx;
-        else if (cleanField.includes('장애유형') || cleanField.includes('장애명')) map.disabilityType = idx;
-        else if (cleanField.includes('급수') || cleanField.includes('등급')) map.disabilityGrade = idx;
-        else if (cleanField.includes('복합')) map.complexDisability = idx;
-        else if (cleanField.includes('국비')) map.fundingNational = idx;
-        else if (cleanField.includes('도비')) map.fundingProvincial = idx;
-        else if (cleanField.includes('시비')) map.fundingCity = idx;
-        else if (cleanField.includes('시') && !cleanField.includes('시비') && !cleanField.includes('시간')) map.addressCity = idx;
-        else if (cleanField.includes('구') && !cleanField.includes('구분') && !cleanField.includes('상담')) map.addressDistrict = idx;
-        else if (cleanField.includes('동') && !cleanField.includes('복동')) map.addressDong = idx;
-        else if (cleanField.includes('세부주소') || cleanField.includes('상세주소') || cleanField.includes('주소')) {
-          if (map.addressDetail === undefined) map.addressDetail = idx;
-        }
-        else if (cleanField.includes('연락처') || cleanField.includes('전화')) map.phone = idx;
-        else if (cleanField.includes('서비스')) map.serviceContent = idx;
-        else if (cleanField.includes('특이')) map.specialNotes = idx;
-        else if (cleanField.includes('상담')) map.consultationLogs = idx;
-        else if (cleanField.includes('비고')) map.remarks = idx;
-      });
-    } else {
-      // Fallback straight sequential mapping based on Excel description:
-      // 0: 구분, 1: 접수일, 2: 접수자, 3: 성명, 4: 생년월일, 5: 성별, 6: 장애유형, 7: 급수, 8: 복합장애,
-      // 9: 국비, 10: 도비, 11: 시비, 12: 시, 13: 구, 14: 동, 15: 세부주소, 16: 연락처, 17: 서비스내용, 18: 특이사항, 19: 상담내역, 20: 비고
-      map = {
-        category: 0,
-        registrationDate: 1,
-        registrar: 2,
-        name: 3,
-        birthDate: 4,
-        gender: 5,
-        disabilityType: 6,
-        disabilityGrade: 7,
-        complexDisability: 8,
-        fundingNational: 9,
-        fundingProvincial: 10,
-        fundingCity: 11,
-        addressCity: 12,
-        addressDistrict: 13,
-        addressDong: 14,
-        addressDetail: 15,
-        phone: 16,
-        serviceContent: 17,
-        specialNotes: 18,
-        consultationLogs: 19,
-        remarks: 20
-      };
+    // ISO string format check
+    if (val instanceof Date) {
+      const year = val.getFullYear();
+      const month = String(val.getMonth() + 1).padStart(2, '0');
+      const day = String(val.getDate()).padStart(2, '0');
+      return `${year}-${month}-${day}`;
     }
 
-    const fetchedItems: Candidate[] = [];
-
-    for (let i = startIndex; i < rows.length; i++) {
-      const columns = parseLine(rows[i]);
-      if (columns.length < 2 || columns.every(col => col === '')) continue;
-
-      const getColVal = (key: string, defaultVal: string = ''): string => {
-        const idx = map[key];
-        if (idx !== undefined && columns[idx] !== undefined) {
-          return columns[idx].trim();
-        }
-        return defaultVal;
-      };
-
-      const getBoolVal = (key: string): boolean => {
-        const val = getColVal(key).toLowerCase();
-        return val === 'y' || val === 'yes' || val === 'o' || val === '참' || val === 'true' || val === '대상' || val === '유' || val === '1';
-      };
-
-      // Raw date parsing & formatting (ensure YYYY-MM-DD or keep raw if invalid, try fallback)
-      let rawRegDate = getColVal('registrationDate');
-      let selectRegDate = formatRawDate(rawRegDate);
-
-      // Category parsing
-      let catSelect = getColVal('category') as CategoryType;
-      if (!['대기', '삭제', '보류', '연계'].includes(catSelect)) {
-        catSelect = '대기'; // fallback default
-      }
-
-      // Gender parsing
-      let genderVal: '남' | '여' | '기타' = '기타';
-      const rawGender = getColVal('gender');
-      if (rawGender.includes('남') || rawGender.toLowerCase() === 'm' || rawGender.toLowerCase() === 'male' || rawGender === '1') {
-        genderVal = '남';
-      } else if (rawGender.includes('여') || rawGender.toLowerCase() === 'f' || rawGender.toLowerCase() === 'female' || rawGender === '2') {
-        genderVal = '여';
-      }
-
-      // Parse Consultation Log. Excel logs usually are a single text.
-      // We parse it into an array. If there are dates formatted inside (e.g. 2025/03/12: some text), we split by newline or date format.
-      const rawLogs = getColVal('consultationLogs');
-      const consultationLogs: ConsultationLog[] = [];
+    const dateStr = String(val).trim();
+    
+    // Excel Day serial format: e.g. 45367
+    if (/^\d{5}(\.\d+)?$/.test(dateStr)) {
+      const serial = parseFloat(dateStr);
+      const utc_days  = Math.floor(serial - 25569);
+      const utc_value = utc_days * 86400;
+      const date_info = new Date(utc_value * 1000);
       
-      if (rawLogs) {
-        // Let's try splitting standard newline-delimited histories.
-        // Try to identify dates like "24.03.11:..." or "2025-03-12 - ..."
-        const logLines = rawLogs.split(/\n+/).filter(line => line.trim() !== '');
-        
-        logLines.forEach((logLine, logIdx) => {
-          // Detect if line contains a date
-          const dateMatch = logLine.match(/(\d{4}[-./]\d{1,2}[-./]\d{1,2})|(\d{2}[-./]\d{1,2}[-./]\d{1,2})/);
-          let logDate = selectRegDate; // Fallback to registration date
-          let logText = logLine;
-          
-          if (dateMatch) {
-            const rawMatchedDate = dateMatch[0];
-            const formattedLogDate = formatRawDate(rawMatchedDate);
-            if (formattedLogDate !== '2026-05-28') { // if not empty fallback
-              logDate = formattedLogDate;
-            }
-          }
-          
-          consultationLogs.push({
-            id: `imported-log-${i}-${logIdx}`,
-            date: logDate,
-            content: logText
-          });
-        });
-
-        // If split returned nothing but rawLogs is full
-        if (consultationLogs.length === 0) {
-          consultationLogs.push({
-            id: `imported-log-${i}-0`,
-            date: selectRegDate,
-            content: rawLogs
-          });
-        }
-      } else {
-        // Default initial log
-        consultationLogs.push({
-          id: `imported-log-${i}-0`,
-          date: selectRegDate,
-          content: '[최초 등록] 이용대기 접수 완료'
-        });
-      }
-
-      // Birthdate formatting
-      const rawBirth = getColVal('birthDate');
-      const formattedBirth = formatRawDate(rawBirth);
-
-      fetchedItems.push({
-        id: `imported-cand-${Date.now()}-${i}-${Math.random().toString(36).substr(2, 5)}`,
-        category: catSelect,
-        registrationDate: selectRegDate,
-        registrar: getColVal('registrar', '미기재'),
-        name: getColVal('name', '이름없음'),
-        birthDate: formattedBirth !== 'Invalid Date' ? formattedBirth : rawBirth || '1990-01-01',
-        gender: genderVal,
-        disabilityType: getColVal('disabilityType', '미지정'),
-        disabilityGrade: getColVal('disabilityGrade', '미분류'),
-        complexDisability: getBoolVal('complexDisability'),
-        fundingNational: getColVal('fundingNational'),
-        fundingProvincial: getColVal('fundingProvincial'),
-        fundingCity: getColVal('fundingCity'),
-        addressCity: getColVal('addressCity'),
-        addressDistrict: getColVal('addressDistrict'),
-        addressDong: getColVal('addressDong'),
-        addressDetail: getColVal('addressDetail'),
-        phone: formatPhoneNumber(getColVal('phone')),
-        serviceContent: getColVal('serviceContent'),
-        specialNotes: getColVal('specialNotes'),
-        consultationLogs,
-        remarks: getColVal('remarks')
-      });
+      const year = date_info.getFullYear();
+      const month = String(date_info.getMonth() + 1).padStart(2, '0');
+      const day = String(date_info.getDate()).padStart(2, '0');
+      return `${year}-${month}-${day}`;
     }
 
-    return fetchedItems;
-  };
-
-  const formatRawDate = (dateStr: string): string => {
-    if (!dateStr) return '2026-05-28'; // fallback
+    // Try normal parsed formats
     const digits = dateStr.replace(/[^\d]/g, '');
-    
-    // YYYYMMDD
     if (digits.length === 8) {
       return `${digits.substring(0, 4)}-${digits.substring(4, 6)}-${digits.substring(6, 8)}`;
     }
-    // YYMMDD
     if (digits.length === 6) {
       const prefix = parseInt(digits.substring(0, 2)) > 50 ? '19' : '20';
       return `${prefix}${digits.substring(0, 2)}-${digits.substring(2, 4)}-${digits.substring(4, 6)}`;
     }
-    
-    // Regular splits
+
     const parts = dateStr.split(/[-./_]/).map(p => p.trim());
     if (parts.length === 3) {
       let year = parts[0];
@@ -285,8 +69,13 @@ export default function ExcelImporter({ onImport }: ExcelImporterProps) {
       const day = parts[2].padStart(2, '0');
       return `${year}-${month}-${day}`;
     }
-    
-    return dateStr; // return original if failed
+
+    const matches = dateStr.match(/(\d{4})[-./](\d{1,2})[-./](\d{1,2})/);
+    if (matches) {
+      return `${matches[1]}-${matches[2].padStart(2, '0')}-${matches[3].padStart(2, '0')}`;
+    }
+
+    return dateStr;
   };
 
   const formatPhoneNumber = (phoneStr: string): string => {
@@ -301,79 +90,324 @@ export default function ExcelImporter({ onImport }: ExcelImporterProps) {
     return phoneStr;
   };
 
-  const parsePreview = (text: string) => {
-    try {
-      const candidates = parseDataString(text);
-      if (candidates.length > 0) {
-        setPreviewData(candidates.slice(0, 3)); // show top 3 as preview
-        setParsedCount(candidates.length);
-        setErrorMessage(null);
-      } else {
-        setPreviewData([]);
-        setParsedCount(0);
+  const parseRemarksAndLogs = (rawLogs: string, defaultDate: string, index: number): ConsultationLog[] => {
+    if (!rawLogs || !rawLogs.trim()) {
+      return [{
+        id: `log-${index}-initial-${Date.now()}`,
+        date: defaultDate,
+        content: '[최초 등록] 이용대기 접수 완료'
+      }];
+    }
+
+    const logs: ConsultationLog[] = [];
+    
+    // Split on newline to isolate notes
+    const lines = rawLogs.split(/\r?\n/).map(line => line.trim()).filter(line => line !== '');
+    
+    lines.forEach((line, logIdx) => {
+      // Find dates: e.g. 2025.01.12, 12/23/24, (25.12.02)
+      const dateRegex = /([\[\(]?\s*(?:20)?(23|24|25|26|27)[-./](0[1-9]|1[0-2]|\d)[-./](0[1-9]|[12]\d|3[01]|\d)\s*[\]\)]?)/;
+      const match = line.match(dateRegex);
+      
+      let resolvedDate = defaultDate;
+      let cleanText = line;
+      
+      if (match) {
+        const fullDateStr = match[1];
+        const yearShort = match[2];
+        const monthStr = match[3].padStart(2, '0');
+        const dayStr = match[4].padStart(2, '0');
+        
+        const fullYear = yearShort.length === 2 ? `20${yearShort}` : yearShort;
+        resolvedDate = `${fullYear}-${monthStr}-${dayStr}`;
+        
+        cleanText = line.replace(fullDateStr, '').trim();
+        cleanText = cleanText.replace(/^[:\-~=\s\],]+/g, '').trim();
       }
-    } catch (err: any) {
-      setErrorMessage('데이터 해석 과정성 오류가 발생했습니다. 규격을 확인해주세요: ' + err.message);
-      setPreviewData([]);
-      setParsedCount(null);
+      
+      if (cleanText) {
+        logs.push({
+          id: `imported-log-${index}-${logIdx}-${Math.random().toString(36).substr(2, 5)}`,
+          date: resolvedDate,
+          content: cleanText
+        });
+      }
+    });
+
+    if (logs.length === 0) {
+      logs.push({
+        id: `imported-log-${index}-0-${Math.random().toString(36).substr(2, 5)}`,
+        date: defaultDate,
+        content: rawLogs
+      });
+    }
+
+    return logs;
+  };
+
+  const processExcelWorkbook = (workbook: any) => {
+    try {
+      const firstSheetName = workbook.SheetNames[0];
+      const worksheet = workbook.Sheets[firstSheetName];
+      const rawRows = XLSX.utils.sheet_to_json<any[]>(worksheet, { header: 1 });
+      
+      if (rawRows.length === 0) {
+        setErrorMessage('비어 있는 내용의 시트이거나 형식이 잘못되었습니다.');
+        return;
+      }
+
+      // Filter out clean visual empty lines
+      const filtered = rawRows.filter(row => row && row.length > 0 && row.some(cell => cell !== null && cell !== undefined && String(cell).trim() !== ''));
+      if (filtered.length < 2) {
+        setErrorMessage('헤더행을 파싱했으나, 그 아래의 실제 인적 데이터가 포함되어 있지 않습니다.');
+        return;
+      }
+
+      const headers = filtered[0].map(h => String(h || '').trim());
+      
+      // Match column keywords explicitly
+      let map: Record<string, number> = {};
+      headers.forEach((field, idx) => {
+        const clean = field.replace(/\s+/g, '');
+        if (clean.includes('구분')) map.category = idx;
+        else if (clean.includes('접수일')) map.registrationDate = idx;
+        else if (clean.includes('접수자')) map.registrar = idx;
+        else if (clean === '성명' || clean === '이름' || (clean.includes('성명') && !clean.includes('접수'))) map.name = idx;
+        else if (clean.includes('생년월일') || clean.includes('생년') || clean.includes('주민번호')) map.birthDate = idx;
+        else if (clean.includes('성별')) map.gender = idx;
+        else if (clean.includes('장애유형') || clean.includes('장애형') || clean === '장애명') map.disabilityType = idx;
+        else if (clean.includes('급수') || clean.includes('등급')) map.disabilityGrade = idx;
+        else if (clean.includes('복합')) map.complexDisability = idx;
+        else if (clean.includes('국비')) map.fundingNational = idx;
+        else if (clean.includes('도비')) map.fundingProvincial = idx;
+        else if (clean.includes('시비')) map.fundingCity = idx;
+        else if (clean === '시') map.addressCity = idx;
+        else if (clean === '구') map.addressDistrict = idx;
+        else if (clean === '동') map.addressDong = idx;
+        else if (clean.includes('세부주소') || clean.includes('상세주소') || clean === '주소') {
+          if (map.addressDetail === undefined) map.addressDetail = idx;
+        }
+        else if (clean.includes('연락처') || clean.includes('전화') || clean.includes('핸드폰')) map.phone = idx;
+        else if (clean.includes('서비스내용') || clean.includes('서비스요청') || clean.includes('서비스')) map.serviceContent = idx;
+        else if (clean.includes('특이사항') || clean.includes('특이')) map.specialNotes = idx;
+        else if (clean.includes('상담내역') || clean.includes('상담기록') || clean.includes('상담')) map.consultationLogs = idx;
+        else if (clean.includes('비고')) map.remarks = idx;
+      });
+
+      const essentialKeys = ['category', 'registrationDate', 'name'];
+      const hasEssentials = essentialKeys.every(k => map[k] !== undefined);
+      
+      if (!hasEssentials) {
+        // Sequentially map exact columns schema provided by the user:
+        // 0: 구분, 1: 접수일, 2: 접수자, 3: 성명, 4: 생년월일, 5: 성별, 6: 장애유형, 7: 급수, 8: 복합장애,
+        // 9: 국비, 10: 도비, 11: 시비, 12: 시, 13: 구, 14: 동, 15: 세부주소, 16: 연락처, 17: 서비스내용, 18: 특이사항, 19: 상담내역, 20: 비고
+        map = {
+          category: 0,
+          registrationDate: 1,
+          registrar: 2,
+          name: 3,
+          birthDate: 4,
+          gender: 5,
+          disabilityType: 6,
+          disabilityGrade: 7,
+          complexDisability: 8,
+          fundingNational: 9,
+          fundingProvincial: 10,
+          fundingCity: 11,
+          addressCity: 12,
+          addressDistrict: 13,
+          addressDong: 14,
+          addressDetail: 15,
+          phone: 16,
+          serviceContent: 17,
+          specialNotes: 18,
+          consultationLogs: 19,
+          remarks: 20
+        };
+      }
+
+      const parsedList: Candidate[] = [];
+      
+      for (let i = 1; i < filtered.length; i++) {
+        const row = filtered[i];
+        if (!row || row.length === 0 || row.every(c => c === null || c === undefined || String(c).trim() === '')) {
+          continue;
+        }
+
+        const getCell = (key: string, def: string = ''): string => {
+          const index = map[key];
+          if (index !== undefined && row[index] !== undefined && row[index] !== null) {
+            return String(row[index]).trim();
+          }
+          return def;
+        };
+
+        const getBool = (key: string): boolean => {
+          const v = getCell(key).toLowerCase();
+          return v === 'y' || v === 'yes' || v === 'o' || v === '참' || v === 'true' || v === '대상' || v === '유' || v === '1' || v.includes('중증');
+        };
+
+        const rawRegDate = getCell('registrationDate');
+        const formattedRegDate = formatExcelDate(rawRegDate);
+
+        let cat = getCell('category') as CategoryType;
+        if (!['대기', '삭제', '보류', '연계'].includes(cat)) {
+          cat = '대기';
+        }
+
+        let genderVal: '남' | '여' | '기타' = '기타';
+        const rawGender = getCell('gender');
+        if (rawGender.includes('남') || rawGender.toLowerCase() === 'm' || rawGender.toLowerCase() === 'male' || rawGender === '1') {
+          genderVal = '남';
+        } else if (rawGender.includes('여') || rawGender.toLowerCase() === 'f' || rawGender.toLowerCase() === 'female' || rawGender === '2') {
+          genderVal = '여';
+        }
+
+        const rawBirth = getCell('birthDate');
+        const birthVal = formatExcelDate(rawBirth);
+
+        const logsCell = getCell('consultationLogs');
+        const logs = parseRemarksAndLogs(logsCell, formattedRegDate, i);
+
+        parsedList.push({
+          id: `imported-excel-cand-${Date.now()}-${i}-${Math.random().toString(36).substr(2, 5)}`,
+          category: cat,
+          registrationDate: formattedRegDate || '2026-05-28',
+          registrar: getCell('registrar', '미기재'),
+          name: getCell('name', '이름없음'),
+          birthDate: birthVal || '1990-01-01',
+          gender: genderVal,
+          disabilityType: getCell('disabilityType', '미지정'),
+          disabilityGrade: getCell('disabilityGrade', '미분류'),
+          complexDisability: getBool('complexDisability'),
+          fundingNational: getCell('fundingNational'),
+          fundingProvincial: getCell('fundingProvincial'),
+          fundingCity: getCell('fundingCity'),
+          addressCity: getCell('addressCity'),
+          addressDistrict: getCell('addressDistrict'),
+          addressDong: getCell('addressDong'),
+          addressDetail: getCell('addressDetail'),
+          phone: formatPhoneNumber(getCell('phone')),
+          serviceContent: getCell('serviceContent'),
+          specialNotes: getCell('specialNotes'),
+          consultationLogs: logs,
+          remarks: getCell('remarks')
+        });
+      }
+
+      setPreviewData(parsedList.slice(0, 5));
+      setParsedCount(parsedList.length);
+      setPendingImportData(parsedList);
+      setErrorMessage(null);
+
+    } catch (e: any) {
+      console.error(e);
+      setErrorMessage('파일 해석 도중 오류가 발생했습니다: ' + e.message);
     }
   };
 
-  const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
+  const handleDragOver = (e: React.DragEvent) => {
+    e.preventDefault();
+    setIsDragging(true);
+  };
 
+  const handleDragLeave = () => {
+    setIsDragging(false);
+  };
+
+  const handleDrop = (e: React.DragEvent) => {
+    e.preventDefault();
+    setIsDragging(false);
+    
+    const file = e.dataTransfer.files?.[0];
+    if (file) {
+      readFileAndParse(file);
+    }
+  };
+
+  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (file) {
+      readFileAndParse(file);
+    }
+  };
+
+  const readFileAndParse = (file: File) => {
     const reader = new FileReader();
-    reader.onload = (event) => {
-      const content = event.target?.result as string;
-      setInputText(content);
-      parsePreview(content);
+    reader.onload = (evt) => {
+      try {
+        const bstr = evt.target?.result;
+        const workbook = XLSX.read(bstr, { type: 'binary', cellDates: true });
+        processExcelWorkbook(workbook);
+      } catch (err: any) {
+        setErrorMessage('엑셀 파싱 중 치명적 오류 발생: ' + err.message);
+      }
     };
-    reader.readAsText(file, 'EUC-KR'); // Many Korean CSV files exported from Excel are in EUC-KR
+    reader.readAsBinaryString(file);
+  };
+
+  const handlePasteChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
+    const text = e.target.value;
+    setInputText(text);
+    setErrorMessage(null);
+    if (!text.trim()) {
+      setPreviewData([]);
+      setParsedCount(null);
+      return;
+    }
+
+    try {
+      // Parse TSV lines
+      const rows = text.split(/\r?\n/).filter(line => line.trim() !== '');
+      if (rows.length === 0) return;
+
+      const workbook = XLSX.read(text, { type: 'string' });
+      processExcelWorkbook(workbook);
+    } catch (err: any) {
+      setErrorMessage('붙여넣은 대기 기록을 파싱하지 못했습니다: ' + err.message);
+    }
   };
 
   const executeImport = () => {
-    if (!inputText.trim()) return;
-    const finalCandidates = parseDataString(inputText);
-    if (finalCandidates.length === 0) {
+    if (pendingImportData.length === 0) {
       setErrorMessage('가져올 유효한 데이터가 없습니다.');
       return;
     }
     
-    onImport(finalCandidates);
+    onImport(pendingImportData);
     setInputText('');
     setPreviewData([]);
+    setPendingImportData([]);
     setParsedCount(null);
-    alert(`성공적으로 ${finalCandidates.length}명의 대기명단 데이터를 정렬 및 등록 완료하였습니다!`);
   };
 
   return (
-    <div className="bg-white/80 backdrop-blur-md rounded-2xl border border-slate-100 shadow-xl overflow-hidden mb-8">
-      {/* Tab Select Header */}
+    <div className="bg-white/90 backdrop-blur-md rounded-2xl border border-slate-100 shadow-xl overflow-hidden mb-8">
+      {/* Selector Header */}
       <div className="flex border-b border-slate-100 bg-slate-50/70 p-1">
         <button
           type="button"
-          onClick={() => { setImportType('paste'); setErrorMessage(null); }}
-          className={`flex-1 py-3 px-4 rounded-xl flex items-center justify-center gap-2 text-sm font-medium transition-all ${
-            importType === 'paste' 
-              ? 'bg-white text-emerald-600 shadow-sm' 
-              : 'text-slate-500 hover:text-slate-800 hover:bg-white/40'
-          }`}
-        >
-          <Clipboard className="w-4 h-4" />
-          엑셀 복사-붙여넣기 (추천)
-        </button>
-        <button
-          type="button"
           onClick={() => { setImportType('file'); setErrorMessage(null); }}
-          className={`flex-1 py-3 px-4 rounded-xl flex items-center justify-center gap-2 text-sm font-medium transition-all ${
+          className={`flex-1 py-3 px-4 rounded-xl flex items-center justify-center gap-2 text-xs font-bold transition-all ${
             importType === 'file' 
               ? 'bg-white text-emerald-600 shadow-sm' 
               : 'text-slate-500 hover:text-slate-800 hover:bg-white/40'
           }`}
         >
           <Upload className="w-4 h-4" />
-          CSV 파일 업로드
+          엑셀 파일 (.xlsx, .xls) 첨부하기
+        </button>
+        <button
+          type="button"
+          onClick={() => { setImportType('paste'); setErrorMessage(null); }}
+          className={`flex-1 py-3 px-4 rounded-xl flex items-center justify-center gap-2 text-xs font-bold transition-all ${
+            importType === 'paste' 
+              ? 'bg-white text-emerald-600 shadow-sm' 
+              : 'text-slate-500 hover:text-slate-800 hover:bg-white/40'
+          }`}
+        >
+          <Clipboard className="w-4 h-4" />
+          텍셀 시트 행 복사-붙여넣기
         </button>
       </div>
 
@@ -381,50 +415,59 @@ export default function ExcelImporter({ onImport }: ExcelImporterProps) {
         <div className="mb-4 bg-emerald-50/50 rounded-xl p-4 text-xs text-emerald-800 border border-emerald-100 flex items-start gap-2.5 leading-relaxed">
           <Info className="w-4 h-4 text-emerald-600 shrink-0 mt-0.5" />
           <div>
-            <p className="font-bold mb-1 col-span-2 text-emerald-900 text-sm">스마트 정리 방법 안내</p>
+            <p className="font-bold mb-1 col-span-2 text-emerald-900 text-sm">스마트 엑셀 데이터 분석 안내</p>
             <p className="mb-1">
-              • 엑셀의 헤더(첫 열)를 그대로 전체 드래그 복사(Ctrl+C)하여 붙여넣으면 한글 열 이름을 기준으로 <strong>자동 매핑</strong>됩니다.
+              • 파일은 수집하신 대입 정리대장 엑셀 파일(<strong>.xlsx</strong>, <strong>.xls</strong>) 또는 일반 콤마구분 파일(<strong>.csv</strong>)을 올릴 수 있습니다.
             </p>
             <p className="mb-1">
-              • 헤더 열 이름이 다르면 자동 탐색하여 <strong>[시, 구, 동, 세부주소 → 주소 결합] [서비스내용, 특이사항 → 서비스내용 결합]</strong>로 스마트 구성됩니다.
+              • 규격 행: <strong>구분, 접수일, 접수자, 성명, 생년월일, 성별, 장애유형, 급수, 복합장애, 국비, 도비, 시비, 시, 구, 동, 세부주소, 연락처, 서비스내용, 특이사항, 상담내역, 비고</strong> 순입니다.
             </p>
             <p>
-              • 접수일 및 상담일지에 다음 연도 내역이 있을 시, <strong>2024, 2025, 2026 연도별 명단에 자동 분배</strong>하여 나타납니다.
+              • 똑똑한 자동 정렬 연산: 접수일자와 <strong>상담내역(과거 및 미래 연도 일지포함)</strong>을 자동 감지 파싱하여 <strong>2024, 2025, 2026 연도 분류 탭에 즉각 분배되어 할당되어 출력</strong>됩니다!
             </p>
           </div>
         </div>
 
-        {importType === 'paste' ? (
-          <div>
-            <textarea
-              className="w-full h-44 p-4 border border-slate-200 rounded-xl font-mono text-xs focus:ring-2 focus:ring-emerald-500 bg-slate-50/50 outline-none transition-all placeholder-slate-400"
-              placeholder={`엑셀 시트에서 범위를 드래그 복사한 뒤 여기에 붙여넣으세요. (Ctrl + V)\n\n[권장 헤더 구성]\n구분\t접수일\t접수자\t성명\t생년월일\t성별\t장애유형\t급수\t국비\t도비\t시비\t시\t구\t동\t세부주소\t연락처\t서비스내용\t특이사항\t상담내역\t비고`}
-              value={inputText}
-              onChange={handleTextChange}
-            />
-          </div>
-        ) : (
+        {importType === 'file' ? (
           <div 
+            onDragOver={handleDragOver}
+            onDragLeave={handleDragLeave}
+            onDrop={handleDrop}
             onClick={() => fileInputRef.current?.click()}
-            className="border-2 border-dashed border-slate-200 rounded-xl p-8 hover:border-emerald-500 bg-slate-50/30 text-center cursor-pointer transition-all hover:bg-emerald-50/20 group"
+            className={`border-2 border-dashed rounded-2xl p-10 text-center cursor-pointer transition-all flex flex-col items-center justify-center ${
+              isDragging 
+                ? 'border-emerald-500 bg-emerald-50/30 text-emerald-800' 
+                : 'border-slate-200 bg-slate-50/30 hover:border-emerald-500 hover:bg-emerald-50/10'
+            }`}
           >
             <input 
               type="file" 
               ref={fileInputRef} 
-              onChange={handleFileUpload} 
-              accept=".csv" 
+              onChange={handleFileChange} 
+              accept=".xlsx,.xls,.csv" 
               className="hidden" 
             />
-            <div className="mx-auto w-12 h-12 rounded-full bg-slate-100 flex items-center justify-center text-slate-500 group-hover:bg-emerald-100 group-hover:text-emerald-600 mb-3 transition-colors">
-              <Upload className="w-5 h-5" />
+            <div className={`mx-auto w-14 h-14 rounded-2xl flex items-center justify-center mb-4 transition-colors ${
+              isDragging ? 'bg-emerald-100 text-emerald-600' : 'bg-slate-100 text-slate-500'
+            }`}>
+              <Upload className="w-6 h-6 animate-pulse" />
             </div>
-            <p className="text-sm font-semibold text-slate-700 group-hover:text-emerald-700">여기를 클릭하여 대기명단 CSV 파일 선택</p>
-            <p className="text-xs text-slate-400 mt-1">EUC-KR(한국어 인코딩) 및 일반 UTF-8 형식 지원</p>
+            <p className="text-sm font-extrabold text-slate-700">엑셀 파일을 드래그하여 여기 놓으시거나 클릭해서 파일 선택</p>
+            <p className="text-xs text-slate-400 mt-1.5">행정대기명단 통합 지원 (.xlsx, .xls, .csv)</p>
+          </div>
+        ) : (
+          <div>
+            <textarea
+              className="w-full h-44 p-4 border border-slate-200 rounded-xl font-mono text-xs focus:ring-2 focus:ring-emerald-500 bg-slate-50/50 outline-none transition-all placeholder-slate-400"
+              placeholder={`엑셀 시트에서 통째로 드래그 복사(Ctrl + C)한 뒤 여기에 그대로 붙여넣어주세요. (Ctrl + V)\n\n헤더 열 이름을 한글 규격명으로 명시하시면 순서가 달라도 자동으로 매칭됩니다.`}
+              value={inputText}
+              onChange={handlePasteChange}
+            />
           </div>
         )}
 
         {errorMessage && (
-          <div className="mt-4 p-3 bg-rose-50 border border-rose-100 rounded-xl text-rose-800 text-xs flex items-center gap-2">
+          <div className="mt-4 p-3 bg-rose-50 border border-rose-100 rounded-xl text-rose-800 text-xs flex items-center gap-2 font-semibold">
             <AlertCircle className="w-4 h-4 shrink-0 text-rose-500" />
             <div>{errorMessage}</div>
           </div>
@@ -440,10 +483,10 @@ export default function ExcelImporter({ onImport }: ExcelImporterProps) {
               <div className="flex items-center gap-2">
                 <Check className="w-4.5 h-4.5 text-emerald-600 bg-emerald-100 rounded-full p-0.5" />
                 <span className="text-sm font-bold text-slate-800">
-                  성공적으로 해석됨: <span className="text-emerald-600 font-extrabold">{parsedCount}건</span>
+                  완벽하게 변환 해석 완료: <span className="text-emerald-600 font-extrabold">{parsedCount}건 검출</span>
                 </span>
               </div>
-              <span className="text-xs text-slate-400">데이터 상위 3건 실시간 미리보기</span>
+              <span className="text-xs text-slate-400 font-medium">상위 5명 데이터 가가져오기 미리보기</span>
             </div>
 
             <div className="overflow-x-auto">
@@ -455,14 +498,14 @@ export default function ExcelImporter({ onImport }: ExcelImporterProps) {
                     <th className="py-2 px-1">접수일</th>
                     <th className="py-2 px-1">장애유형</th>
                     <th className="py-2 px-1">주소</th>
-                    <th className="py-2 px-1">서비스 내용</th>
+                    <th className="py-2 px-1">상담내역(연도추정)</th>
                   </tr>
                 </thead>
                 <tbody>
                   {previewData.map((cand, idx) => (
                     <tr key={idx} className="border-b border-slate-100 text-slate-700 hover:bg-slate-50">
                       <td className="py-2 px-1">
-                        <span className={`inline-block px-1.5 py-0.5 text-[10px] rounded font-medium ${
+                        <span className={`inline-block px-1.5 py-0.5 text-[10px] rounded font-bold ${
                           cand.category === '대기' ? 'bg-orange-50 text-orange-600' :
                           cand.category === '삭제' ? 'bg-rose-50 text-rose-600' :
                           cand.category === '보류' ? 'bg-amber-50 text-amber-600' :
@@ -471,19 +514,28 @@ export default function ExcelImporter({ onImport }: ExcelImporterProps) {
                           {cand.category}
                         </span>
                       </td>
-                      <td className="py-2 px-1 font-semibold">{cand.name}</td>
-                      <td className="py-2 px-1 text-slate-500">{cand.registrationDate}</td>
+                      <td className="py-2 px-1 font-bold">{cand.name}</td>
+                      <td className="py-2 px-1 text-slate-500 font-mono">{cand.registrationDate}</td>
                       <td className="py-2 px-1">{cand.disabilityType} ({cand.disabilityGrade})</td>
                       <td className="py-2 px-1 max-w-[150px] truncate">
-                        {cand.addressCity} {cand.addressDistrict} {cand.addressDong} {cand.addressDetail}
+                        {(() => {
+                          const parts = [];
+                          if (cand.addressCity) parts.push(cand.addressCity.trim());
+                          if (cand.addressDistrict) parts.push(cand.addressDistrict.trim());
+                          if (cand.addressDong && cand.addressDong.trim()) {
+                            const trimmedDong = cand.addressDong.trim();
+                            if (trimmedDong.endsWith('동') || trimmedDong.endsWith('읍') || trimmedDong.endsWith('면')) {
+                              parts.push(trimmedDong);
+                            }
+                          }
+                          if (cand.addressDetail) parts.push(cand.addressDetail.trim());
+                          return parts.join(' ').replace(/\s+/g, ' ').trim() || '-';
+                        })()}
                       </td>
-                      <td className="py-2 px-1 max-w-[180px] truncate">
-                        {cand.serviceContent || cand.specialNotes ? (
-                          <>
-                            {cand.serviceContent}
-                            {cand.specialNotes ? ` / ${cand.specialNotes}` : ''}
-                          </>
-                        ) : '생략됨'}
+                      <td className="py-2 px-1 max-w-[180px] truncate text-slate-500">
+                        {cand.consultationLogs && cand.consultationLogs.length > 0 ? (
+                          cand.consultationLogs.map(l => `[${l.date}] ${l.content}`).join(' | ')
+                        ) : '접수만 완료'}
                       </td>
                     </tr>
                   ))}
@@ -497,19 +549,20 @@ export default function ExcelImporter({ onImport }: ExcelImporterProps) {
                 onClick={() => {
                   setInputText('');
                   setPreviewData([]);
+                  setPendingImportData([]);
                   setParsedCount(null);
                 }}
-                className="px-4 py-2 text-xs font-semibold text-slate-500 hover:text-slate-800 bg-white border border-slate-200 rounded-lg transition-all"
+                className="px-4 py-2 text-xs font-bold text-slate-500 hover:text-slate-800 bg-white border border-slate-200 rounded-lg transition-all"
               >
                 초기화
               </button>
               <button
                 type="button"
                 onClick={executeImport}
-                className="px-5 py-2 text-xs font-semibold text-white bg-emerald-600 hover:bg-emerald-700 rounded-lg shadow-sm transition-all flex items-center gap-1.5"
+                className="px-5 py-2 text-xs font-bold text-white bg-emerald-600 hover:bg-emerald-700 rounded-lg shadow-sm transition-all flex items-center gap-1.5"
               >
                 <RefreshCw className="w-3.5 h-3.5" />
-                정리된 대기명단에 통합 반영하기
+                정리된 대기명부 데이터베이스에 영구 반영하기
               </button>
             </div>
           </motion.div>

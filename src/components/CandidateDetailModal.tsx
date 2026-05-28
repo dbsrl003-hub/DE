@@ -584,13 +584,8 @@ export default function CandidateDetailModal({
               <button
                 type="button"
                 onClick={() => {
-                  setInnerConfirm({
-                    message: `${formData.name} 이용자의 가용 대기 기록을 명단 데이터베이스에서 영구적으로 완전히 삭제하시겠습니까? (복구할 수 없습니다)`,
-                    onConfirm: () => {
-                      onDelete(formData.id!);
-                      onClose();
-                    }
-                  });
+                  onDelete(formData.id!);
+                  onClose();
                 }}
                 className="px-4 py-2 text-xs font-bold text-rose-500 bg-rose-50 hover:bg-rose-100 rounded-xl transition-all"
               >

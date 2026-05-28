@@ -101,19 +101,10 @@ export default function App() {
     updateCandidatesList(updatedList);
   };
 
-  // Delete a candidate entry with custom overlay confirm option
+  // Delete a candidate entry instantly as requested
   const handleDeleteCandidate = (id: string) => {
-    const cand = candidates.find(c => c.id === id);
-    const name = cand ? cand.name : '이용대기자';
-    setConfirmDialog({
-      isOpen: true,
-      title: '대기 기록 영구 삭제',
-      message: `정말로 ${name} 이용자의 소중한 대기 기록을 명단에서 아예 완전히(영구히) 삭제하시겠습니까? 이 작업은 등록 파일을 완전히 삭제하며 되돌릴 수 없습니다.`,
-      onConfirm: () => {
-        const filtered = candidates.filter(c => c.id !== id);
-        updateCandidatesList(filtered);
-      }
-    });
+    const filtered = candidates.filter(c => c.id !== id);
+    updateCandidatesList(filtered);
   };
 
   // Mass Import handler
@@ -293,7 +284,12 @@ export default function App() {
 
   // Clean direct native print invocation
   const handlePrint = () => {
-    window.print();
+    try {
+      window.focus();
+      window.print();
+    } catch (e) {
+      console.warn('Print print failed', e);
+    }
   };
 
   const activeCandidates = getCandidatesByYear(selectedYear);
