@@ -35,7 +35,14 @@ export default function App() {
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [editingCandidate, setEditingCandidate] = useState<Candidate | null>(null);
   const [showImporter, setShowImporter] = useState(false);
-  const [confirmDialog, setConfirmDialog] = useState<{ isOpen: boolean; title: string; message: string; onConfirm: () => void; } | null>(null);
+  const [confirmDialog, setConfirmDialog] = useState<{ 
+    isOpen: boolean; 
+    title: string; 
+    message: string; 
+    onConfirm: () => void; 
+    actionText?: string;
+    isWarning?: boolean;
+  } | null>(null);
 
   // Initialize data from localStorage or initial templates
   useEffect(() => {
@@ -353,6 +360,27 @@ export default function App() {
               <Printer className="w-4 h-4" />
               대기목록 인쇄
             </button>
+
+            <button
+              type="button"
+              onClick={() => {
+                setConfirmDialog({
+                  isOpen: true,
+                  title: '전체 데이터 영구 초기화',
+                  message: '⚠️ 경고: 정말로 등록된 모든 연도의 대기명단 데이터를 영구히 완전히 삭제하고 초기화하시겠습니까? 이 작업은 데이터를 완전히 지워 복구할 수 없습니다.',
+                  actionText: '전체 초기화 실행',
+                  isWarning: true,
+                  onConfirm: () => {
+                    updateCandidatesList([]);
+                  }
+                });
+              }}
+              className="px-4 py-2 text-xs font-bold text-rose-600 bg-rose-50 hover:bg-rose-100 border border-rose-200 rounded-xl transition-all flex items-center gap-1.5 cursor-pointer"
+              title="로컬 데이터베이스 초기화"
+            >
+              <Trash2 className="w-4 h-4 text-rose-500" />
+              전체 리스트 초기화
+            </button>
           </div>
 
         </div>
@@ -523,7 +551,7 @@ export default function App() {
       {/* PERFECT CUSTOM IN-APP CONFIRMATION DIALOG */}
       <AnimatePresence>
         {confirmDialog && confirmDialog.isOpen && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-905/60 backdrop-blur-xs">
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-xs">
             <motion.div 
               initial={{ scale: 0.95, opacity: 0 }}
               animate={{ scale: 1, opacity: 1 }}
@@ -554,9 +582,9 @@ export default function App() {
                       confirmDialog.onConfirm();
                       setConfirmDialog(null);
                     }}
-                    className="flex-1 py-2 rounded-xl bg-rose-600 hover:bg-rose-705 text-white text-xs font-bold transition-all shadow-md shadow-rose-650/10 cursor-pointer"
+                    className="flex-1 py-2 rounded-xl bg-rose-600 hover:bg-rose-700 text-white text-xs font-bold transition-all shadow-md shadow-rose-600/10 cursor-pointer"
                   >
-                    삭제 실행
+                    {confirmDialog.actionText || '삭제 실행'}
                   </button>
                 </div>
               </div>

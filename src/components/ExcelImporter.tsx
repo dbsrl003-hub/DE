@@ -35,6 +35,17 @@ export default function ExcelImporter({ onImport }: ExcelImporterProps) {
     }
 
     const dateStr = String(val).trim();
+
+    // 2. Try parsing it as a Javascript Date if it contains standard JS date string indicators
+    if (dateStr.includes('GMT') || dateStr.includes('UTC') || /[a-zA-Z]/.test(dateStr) || dateStr.includes('표준시')) {
+      const parsedDate = new Date(dateStr);
+      if (!isNaN(parsedDate.getTime())) {
+        const year = parsedDate.getFullYear();
+        const month = String(parsedDate.getMonth() + 1).padStart(2, '0');
+        const day = String(parsedDate.getDate()).padStart(2, '0');
+        return `${year}-${month}-${day}`;
+      }
+    }
     
     // Excel Day serial format: e.g. 45367
     if (/^\d{5}(\.\d+)?$/.test(dateStr)) {
